@@ -1,0 +1,149 @@
+---
+title: 'OAuth'
+date: '2023-10-11'
+lastmod: '2023-08-05'
+tags: ['Network', 'OAuth', 'SSO', 'OpenID']
+draft: false
+summary: '인증과 인가를 위한 더 많은 방법'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+본 OAuth 포스팅을 보기 전에 [SSO](/blog/sso/) 포스팅을 본다면 여러 비유들을 이해하기 쉬울 것이다.
+또한 OAuth는 SSO 보다 주체들이 더 많고 관계가 복잡하기 때문에 SSO를 먼저 이해하길 추천한다.
+
+## OAuth의 등장
+
+OAuth는 안전한 resource authorization(인가)을 웹이나 모바일에 제공하기 위한 표준이다. **SSO처럼 User의 authentication(인증)이 목표는 아니다.**
+
+물론 OAuth도 SSO처럼 처음에 Credentials를 입력하는 인증이 필요하다.
+다만, 이 인증은 SSO처럼 Service Provider의 인가를 위해서 수행하는 것이 아닌
+**OAuth를 제공하는 인가업체에 서비스 업체가 얼마만큼 유저의 정보에 접근할 수 있냐**를 확인하기 위한 프로토콜이다.
+
+즉, 유저의 인가가 아닌 서비스 업체의 인가를 위한 프로토콜이다. 그럼 인가는 없는 것인가?
+
+꼭 그렇진 않다. 인가를 위해선 인증이 항상 선행돼야한다.
+그렇기에 인가업체에 User가 인증하고 그 정보를 바탕으로 서비스 업체가 유저 정보에 접근하는 것은
+**SSO처럼 자연스럽게 유저에대한 인증을 인가 업체가 대신 수행해준 것이다.**
+
+## OAuth의 주체들
+
+OAuth도 SSO처럼 여러 주체가 등장한다.
+
+1. **Resource Owner** : 서비스를 사용하고자 하는 개인
+2. **Clinet** : 서비스를 제공하는 업체, Resource Owner의 정보를 Resource Server에 요청하는 주체, 그리고 Authorization Server의 인가를 요청하는 주체.
+3. **Authorization Server** : Client를 인증하고 권한 범위를 정하는 주체
+4. **Resource Server** : Authorization Server가 정한 Client의 범위에 따라 인가하고, Resource Owner의 정보를 응답하는 주체
+
+## OAuth 프로토콜
+
+공식적인 OAuth 프로토콜은 다음과 같다.
+주체의 이름에서 들어나듯이 Client가 다른 주체들과 소통하면서 최종적으로 Resource Owner의 정보를 받게된다.
+
+```
++--------+                               +---------------+
+|        |--(A)- Authorization Request ->|   Resource    |
+|        |                               |     Owner     |
+|        |<-(B)-- Authorization Grant ---|               |
+|        |                               +---------------+
+|        |
+|        |                               +---------------+
+|        |--(C)-- Authorization Grant -->| Authorization |
+| Client |                               |     Server    |
+|        |<-(D)----- Access Token -------|               |
+|        |                               +---------------+
+|        |
+|        |                               +---------------+
+|        |--(E)----- Access Token ------>|    Resource   |
+|        |                               |     Server    |
+|        |<-(F)--- Protected Resource ---|               |
++--------+                               +---------------+
+
+              Abstract Protocol Flow
+```
+
+### OAuth 시작과 Authorization Request
+
+1. Client는 Authorized redirect URL에 해당하는 페이지를 구현해놓고 준비하고 있어야한다.
+   - 소셜 로그인 인증 화면을 Owner에게 보여줌
+   - URL은 다음과 같이 작성
+   ```
+   https://Resource-server-url?
+       redirect_url="~~~"&
+       scope="~~~~~"&. // Client가 사용할 기능
+       client_id="~~~~~~"
+   ```
+2. **Authorization Request**
+
+   Owner가 소셜 로그인 버튼을 누르면 URL 주소로 Authorization Server로 이동
+
+   - Authorization Server는 Owner가 Credentials를 입력하도록 창 제공
+   - 로그인하면 Authorization Server는 Owner가 Client에게 얼마큼의 권한(Scope)를 줄지 문의
+   - Owner가 응답하면 Authorization Server는 user id와 그에 따른 Scope를 저장
+
+### Authorization Grant
+
+2번 과정 후 Authorization Server는 Owner에게 authentication code를 URL을 통해서 제공한다
+
+```
+Location:https://client/callback/?code=3
+```
+
+code를 받은 Client는 Authorization Server에게 4가지 정보 주면서 Access token을 요청한다.
+
+```
+- authorization code
+- redirect_url
+- client_id
+- client_secret
+```
+
+### Access Token (1)
+
+Authorization Server는 가지고 있는 authentication code와 Client가 제공한 code를 비교하고 client_secret를 통해서 Client를 인증한다.
+
+Authorization Server는 authentication code를 재사용 못하게 지우고, access token과 refresh token을 생성하여 Client에게 응답으로 보낸다.
+
+Client는 access token과 refresh token을 저장하고 있는다.
+
+### Access Token (2), Protected Resource
+
+Client는 Owner의 정보를 Resource Server에 요청하기 위해 아래와 같은 URL로 access token을 제공하고 인가를 받는다.
+
+```
+GET /drive/v2/files HTTP/1.1
+Authorization : Bearer <access_token>
+Host : www.googleapis.com/
+```
+
+Resource Server는 Authorization Server에 저장된 Scope에 따라 Client의 요청을 인가할지 안할지 결정한다.
+
+Resource Server의 인가가 완료되면 Client에게 Protected Resource를 응답한다.
+
+## Refresh token
+
+access token은 보안상의 이유로 유효기간이 있다. Client가 매번 만료된 access token을 받기위해서 OAuth 전체 과정을 수행하는 것은 Authorization Server에게도 부담된다.
+따라서 Client는 처음 access token을 제공할 때 함께 제공된 Refresh token을 이용해서 access token을 다시 받을 수 있다.
+Refresh token은 90일 이상의 TTL(Time to Live)를 가지기 때문에 유효기간이 access token에 비해서 매우 길다.
+
+아래 그림처럼 refresh token과 함께 access token을 요청하면
+Authorization Server는 정확한 값을 받으면 새로운 access token을 응답한다.
+
+![access token request with refresh token](/static/images/network/refresh.png)
+
+## OAuth와 OpenID의 차이
+
+OpenID는 OAuth 기반의 더 높은 성능의 인증 프로토콜이다.
+
+OAuth와 유사한 프로토콜을 가지지만, 주로 다른 점은 Authorization Server가 Client에게 access tokne 뿐만 아니라 ID token도 함께 제공한다.
+ID token은 JWT를 통해 암호화된 토큰 안에 사용자 정보를 비롯한 다양한 정보를 HTTP 헤더의 최대 사이즈 이내로 저장할 수 있다. 따라서 Client는 access token을 이용해서
+유저 정보를 얻기위해 access token으로 Resource Server에게 요청할 필요 없이 사용자 정보가 담긴 JWT를 복호화해서 사용할 수 있게된다.
+
+OAuth2는 인증 후 인가를 통해 유저 데이터를 선택적으로 가져오지만, OIDC는 인증과 함께 유저 데이터를 한번에 다 가져오게된다.
+인증시 access token과 Resource를 반환한다. 또한 json 기반이므로 웹 뿐만 아니라 모바일에도 동작하는 부분에서 SAML과 차이점이 있다.
+
+`Q : 그럼 성능이 좋고 더 보완된 OIDC 프로토콜을 사용하지 않고 OAuth2를 사용하는 걸까?`
+
+`A : 유저 정보 취득 및 활용에 있어서 제어권을 유저에게 주기 위해서 사용한다.`
