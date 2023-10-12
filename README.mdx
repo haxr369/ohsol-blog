@@ -340,7 +340,7 @@ export const SearchProvider = ({ children }) => {
   const router = useRouter()
   return (
     <KBarSearchProvider
-      kbarConfig={{
+      kbarConfig= {% raw % }{
         searchDocumentsPath: 'search.json',
         defaultActions: [
           {
@@ -370,7 +370,7 @@ export const SearchProvider = ({ children }) => {
             perform: () => router.push(post.path),
           }))
         },
-      }}
+      } {% endraw %}
     >
       {children}
     </KBarSearchProvider>
