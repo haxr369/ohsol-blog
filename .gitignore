@@ -43,6 +43,7 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 /data/blog/How2use/**
+/data/blog/nested-route
 
 # Contentlayer
 .contentlayer
