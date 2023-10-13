@@ -44,10 +44,60 @@ AWS는 클라우드 리소스를 제공하는 서비스. 아래와 같이 3가�
 내가 작성한 **MinimalAuth**라는 사용자 그룹은 EC2와 S3 그리고 VPC에 전부 접근 가능하도록 설정했고 새로운 계정 asacSol을 생성했다.
 계정을 생성하면 계정 비밀번호와 시크릿 access key를 부여받는데 이는 원격으로 내 계정 소유의 리소스에 접근할 수 있게한다.
 
-## VPC 만들기
+## CIDR 설정
 
-## Subnet 만들기
+VPC와 Subnet을 만들기 위해선 CIDR 설정이 필요하다. CIDR는 베이스 IP 주소와 Subnet Mask 두 부분으로 나눌 수 있다.
+베이스 IP는 VPC의 IP 주소 범위를 의미하고, Subnet Mask는 8bit x 4로 이뤄진 베이스 IP에서 앞에서 몇 bit까지를 고정시킬지 정한다.
+예를 들어 `10.0.0.0/16` 같은 경우 앞에서 16bit 즉 `10.0.X.X`에서 `X`부분에 0~255까지 자유롭게 숫자가 들어갈 수 있음을 뜻한다.
+
+## VPC와 Subnet 만들기
+
+VPC는 지역성을 띄기 때문에 서울 ap-northeast-2 Resion에 생성해야한다. 또한 가용영역(AZ)를 여러개를 사용하는 Subnet을 구축해서 만약 한 AZ가 먹통이될 때 다른 AZ로 백업할 수 있도록 해야한다.
+VPC는 IGW를 통해 외부 연결이 가능한 인트라넷 같은 것. IGW는 VPC 내 Subnet 중에서 Public Subnet과 연결되고 Private Subnet은 기본적으로 외부와 연결되지 않는다.
+
+**NACL** : Network Access Control List, Subnet에 인바운드 규칙과 아웃 바운드 규칙을 설정한다.
+
+<img src="/static/images/aws/aws-subnets.png" width={900} />
+
+## EC2 생성하고 인터넷 연결해보기
+
+EC2는 외부 인터넷과 연결돼야하기 때문에 Public Subnet에 생성해야한다. EC2를 생성할 때는 몇몇 설정을 해야한다.
+
+1. **인스턴스 유형** : 이때 <strong>AZ가 b인 Subnet에서는 t2.micro를 생성하지 못하니 주의하자.</strong>
+2. **퍼블릭 IP 설정** : Public subnet에 위치하면 자동으로 퍼블릭 IP를 할당받는다.
+3. **키 페어** : EC2에 접속하기 위한 pem 확장자의 비대칭키 페어. **새 키 페어 생성** 버튼을 누르면 쉽게 만들 수 있다.
+4. **Subnet** : EC2가 들어갈 Subnet을 설정한다.
+5. **SG** : 보안 그룹, IP를 기준으로 EC2에 들어가는(인바운드) 트래픽을 제어한다.
+
+이번 실험은 SSH(22 포트) 접근과 http(80 포트) 접근만 사용할 것다.
+
+<img src="/static/images/aws/aws-ec2-sg.png" width={900} />
+
+위와 같이 SG로 SSH 인바운드 연결을 허용했으니까 한번 SSH 연결을 시도해봤다.
+
+<img src="/static/images/aws/aws-ec2-time-out.png" width={900} />
+
+하지만 위와 같이 ssh를 통한 접근을 못했다. 왜 그럴까? 당연히 나는 EC2를 생성한 Public Subnet에 IGW를 연결하지 않고 외부 인터넷과 연결하려고 했기 때문!!
 
 ## IGW 생성하기
 
-## EC2 생성하고 인터넷 연결해보기
+VPC 자체로는 외부와 연결할 수 없다. 그렇기에 외부 연결을 수행해주는 IGW를 생성하여 EC2에 연결시켜야한다.
+단순히 IGW만 생성하여 VPC와 연결하면 끝인가? 아니! VPC 안에 subnet과 IGW를 라우팅 테이블로 연결시켜야한다.
+따라서 라우팅 테이블의 라우팅을 `0.0.0.0/0`(모든 IP에 개방) 대상을 IGW에 연결시켜서 Public Subnet과 IGW를 연결시켜줘야한다. 결과적으로 아래와 같은 로드맵을 볼 수 있다.
+
+<img src="/static/images/aws/aws-igw.png" width={900} />
+
+위와 같이 IGW는 라우팅 테이블을 통해 Public Subnet으로 연결되었다. 그렇다면 다시 EC2에 SSH 연결이 성공한다.
+
+<img src="/static/images/aws/aws-ec2-connet.png" width={500} />
+
+그렇다면 다시 방금 SG에 설정한 80 포트로 http 연결도 가능할까? 아래와 같이 EC2에 아파치2 WS를 실행시켰다.
+
+<img src="/static/images/aws/aws-apache2-started.png" width={500} />
+
+이제 EC2의 Public IP에 80 포트로 접근해보자.
+
+<img src="/static/images/aws/aws-http-connected.png" width={500} />
+
+그러나 내가 빼먹은 부분이 있다. EC2를 외부에서 연결하기 위해선 꼭 NACL과 SG 설정으로 80 포트를 열어줘야한다.
+그렇지 않으면 Subnet의 인,아웃 바운드 트래픽을 NACL이 막게되거나 EC2의 인바운드 트래픽을 SG가 막게될 수 있다.

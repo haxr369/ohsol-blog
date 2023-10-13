@@ -1,0 +1,92 @@
+---
+title: AWS HTTPS 연결 설정
+date: 2023-10-13
+tags: ['Network', 'AWS', 'https', 'Route53', 'ACM', 'ELB']
+draft: false
+summary: 'EC2 인스턴스가 인터넷과 연결되도록 AWS의 기본적인 인프라를 구축'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={2} />
+
+## 개요
+
+[DNS](/blog/network/dns) 포스팅과 [AWS 인프라 기본 설정](/blog/network/aws-infra) 포스팅을 보고 본 포스팅을 보는 것을 추천한다.
+
+HTTPS 연결을 위해선 먼저 SSL/TLS 인증서가 필요하다 이 인증서는 WS의 Public key를 암호화해서 배포하고 복호화하는데 사용되기 때문이다.
+또한 AWS를 이용해서 https 연결을 구축하려면 Elastic Load Balancer (ELB)를 이용해야한다.
+ELB는 외부 인터넷과 https로 연결돼있고, Subnet의 EC2와는 http로 연결돼있다.
+
+<img alt="aws https infrastructure" src="/static/images/aws/aws-https-infra.png" />
+
+## Route53에서 http 통신용 레코드 생성하기
+
+나는 이미 프로젝트를 수행하기 위해서 `epicktrees.net`이라는 도메인을 구입했다. 그리고 이 도메인에 서브 도메인으로 레코드 생성할 수 있다.
+`b.epicktrees.net`이라는 레코드를 생성할 때, 아래 그림처럼 값을 지정해줘야한다. 여기서 지정한 값은 도메인 이름과 IP 주소를 맵핑하기 위함이다.
+
+<img alt="aws https infrastructure" src="/static/images/aws/aws-recode-b.png" />
+
+위처럼 생성된 `b.epicktrees.net`으로 접속하면 이전에 만든 아파치 서버가 나타난다. 왜 그럴 수 있는지는 [DNS](/blog/network/dns) 포스팅을 보면 이해할 수 있다.
+다시 정리하자면 브라우저는 b.epicktrees.net이 어떤 IP 주소를 가지고 있는지 모르지만, DNS 재귀 서버에 물어보고 DNS 재귀 서버는 Route53이 설정한 IP 주소를 응답해서 브라우저가 최종적으로 IP 주소를 받는 과정이다.
+
+## ACM 인증서 생성하기
+
+ACM에는 `b.epicktrees.net`이 아닌 `asactest.epicktrees.net`을 도메인으로 하는 인증서를 생성한다.
+그러고 ACM에 맞는 레코드를 생성하도록 **검증 대기 중**인 도메인을 Route53에서 레코드 생성해야한다.
+
+그럼 `b.epicktrees.net`와 `asactest.epicktrees.net`는 무슨 차이가 있을까?
+
+바로 `b.epicktrees.net`는 EC2의 IP를 직접 바라보는 도메인이고, `asactest.epicktrees.net`는 EC2 앞에 로드밸런서의 IP를 바라보는 도메인이다.
+그렇기에 우리가 https 연결할 때는 `asactest.epicktrees.net`에 접속해야한다.
+
+## 대상 그룹, Load Balancer 생성하기
+
+Load Balancer에 EC2 같은 리소스를 묶으려면 한 대상 그룹에 리소드를 넣어야한다. Load Balancer와 EC2는 http 통신하기 때문에 프로토콜과 포트는 HTTP:80으로 설정하고, VPC는 EC2가 속한 것을 설정해야한다.
+
+Load Balancer를 생성하려면 몇가지 설정을 해야한다.
+
+1. 이름
+2. VPC와 Subnet : 이전에 EC2를 생성한 Public Subnet을 설정해야한다. 그리고 가용성을 높이기 위해 두개 이상의 AZ를 선택해야 Load Balancer를 만들 수 있다.
+3. SG : 80 포트를 허가하도록 보안 그룹 설정한다. (default)
+4. 리스너 : 외부 인터넷과 Load Balancer는 HTTPS 통신하기 때문에 Load Balancer는 HTTPS 프로토콜을 리스닝한다. 그리고 443 포트로 등어온 트래픽을 위에서 생성한 대상그룹으로 넘겨준다.
+5. default SSL/TLS 서버 인증 : 방금 생성한 ACM 인증서를 선택
+
+## Route53에서 https 통신용 레코드와 Load Balancer IP 연결
+
+1. ACM에서 생성한 레코드와 동일하게 이름 작성
+2. 별칭을 이용해서 Application/Classic Load Balancer임을 설정
+3. Resion을 설정하고, 도메인과 연결하기 원하는 Load Balancer를 설정
+
+## 하지만, https 연결이 안된다.
+
+왜 연결이 안되는지 하나하나 검증해보자.
+
+1. Route53이 동작하지 않나? : 그렇지 않다. 왜냐하면 `asactest.epicktrees.net`의 값을 `b.epicktrees.net`와 동일하게 했을 때 http 연결이 너무 잘된다. 따라서 route53 문제는 아닌것 같다.
+2. Load Balancer와 EC2가 연결되지 않는 것 같다. : Load Balancer를 생성하고 EC2에 연결한다음 자체적으로 생성된 DNS 이름이 있는데 여기에 접속해도 EC2에 접속이 안되는 것을 알 수 있다.
+
+**그렇다면 왜 Load Balancer와 EC2가 연결되지 않는걸까?**
+
+Load Balancer의 인바운드 SG(보안그룹)이 특정 소스로의 모든 트래픽 유형이 들어갈 수 있도록 정했었다.
+일단 보안적으로 위험하더라도 모든 소스에서 모든 트래픽 유형이 들어갈 수 있도록 정했다.
+
+<h1>정답!!</h1>
+
+<img alt="aws https 성공" src="/static/images/aws/aws-https-성공.png" />
+
+_신뢰의 자물쇠 아이콘!_
+
+```
+문제는 Load Balancer SG(보안그룹)의 설정 때문이였다.
+그럼 안전하게 트래픽 유형을 제한하려면 어떻게 할까?
+답은 아래 그림처럼 모든 트래픽 유형이 아닌 HTTPS 유형으로 설정해줘야한다.
+```
+
+<img alt="aws Load Balancer In bound rule" src="/static/images/aws/aws-LB-SG-inbound.png" />
+
+## 결론
+
+이번 주차 과제 범위 보다 조금 넘겨서 https까지 하게됐다. 이번 https 연결을 통해 WS 배포를 빠르게 할 수 있게됐고, 꽤나 빠르게 https 연결도 할 수 있다는 것을 배웠다.
+특히 저번 프로젝트에서 처음 api 서버에 요청하면 76s 동안 기다렸다가 응답하는데 그 이유가 https 연결을 잘못해서는 아닌 것을 알 수 있었다.
+
+다음 포스팅에는 API 연결이 엄청 느렸던 프로젝트의 문제를 한번 찾아보려고 한다.

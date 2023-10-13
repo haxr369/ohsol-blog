@@ -1,1 +1,1 @@
-{"network":4,"login":1,"session":1,"jwt":1,"oauth":1,"sso":2,"openid":1,"dns":1,"aws-route53":1,"multi-author":1,"next-js":1,"feature":1}
+{"network":5,"aws":1,"vpc":1,"ec2":1,"iam":1,"subnet":1,"igw":1,"login":1,"session":1,"jwt":1,"oauth":1,"sso":2,"openid":1,"dns":1,"aws-route53":1,"multi-author":1,"next-js":1,"feature":1}
