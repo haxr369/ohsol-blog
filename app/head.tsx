@@ -16,6 +16,8 @@ export default function Head() {
       />
       <link rel="manifest" href="/static/favicons/site.webmanifest" />
       <link rel="mask-icon" href="/static/favicons/safari-pinned-tab.svg" color="#5bbad5" />
+      <meta name="google-site-verification" content="qQTQ_oeJZF0yUpXfAmqb1_K-5RUEKyzha0Qslh5U4Ow" />
+      <meta name="naver-site-verification" content="b674991316df64c0c653b61d5a58e7cfb226616a" />
       <meta name="msapplication-TileColor" content="#000000" />
       <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fff" />
       <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000" />
