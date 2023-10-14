@@ -1,0 +1,50 @@
+---
+title: AWS에 WAS 배포하기
+date: 2023-10-14
+tags: ['WAS', 'S3', 'EC2', 'Spring', 'AWS']
+draft: false
+summary: 'WAS EC2에 Spring boot로 만든 WAS 배포하기'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={2} />
+
+## 개요
+
+[AWS HTTPS 연결 설정](/blog/aws/aws-https) 포스팅을 보고 본 포스팅을 보는 것을 추천한다.
+본 포스팅은 github action으로 빌드한 Jar 파일을 S3에 올리고, EC2 인스턴스가 S3에 있는 Jar 파일을 다운로드 받고 실행하는 과정을 적었다.
+
+## Spring boot 프로젝트 새롭게 만들기
+
+Spring Initializr를 이용해서 간단한 WAS 하나를 생성한다. 이 WAS는 메모리에 DB를 생성하는 h2 DB를 사용하며 유저 정보를 작성하고 유저 리스트를 볼 수 있는 서비스가 있다.
+아래는 로컬에서 동작하는 모습이다.
+
+<img alt="project demo" src="/static/images/project/project-demo.gif" width={500} />
+
+위와 같이 완성한 Spring 프로젝트를 Jar 파일로 빌드한 후 S3에 수동으로 업로드할 수 있다.
+
+## EC2가 S3에 있는 Jar 파일 다운로드 받고 실행하기
+
+먼저 EC2가 S3에 접근하기 위해선 aws-cli에 인증 정보를 적어놔야한다. 그러기 위해선 아래 코드처럼 aws-cli를 EC2에 설치하고 `aws configure`에서 access key, secret access key, region name 그리고 output format을 적어야한다.
+
+```sh:aws-cli-install.sh
+sudo apt update
+sudo apt install openjdk-17-jdk
+sudo apt install unzip
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+aws --version
+aws configure
+// 4가지 설정 작성
+```
+
+그 다음 S3에 있는 Jar 파일을 다운로드 받고, 실행하면 아래처럼 정상적으로 WAS가 배포된 것을 볼 수 있다.
+
+```
+aws s3 cp s3://[S3 버킷 이름]/app.jar ./app.jar
+sudo java -Dserver.port=80 -jar app.jar
+```
+
+<img alt="project spring ok" src="/static/images/project/project-spring-ok.gif" width={900} />

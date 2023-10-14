@@ -1,0 +1,39 @@
+---
+title: 첫 네트워크 연결이 느렸던 이유
+date: 2023-10-14
+tags: ['AWS', 'https', 'Spring', 'EC2']
+draft: false
+summary: '여기어때 프로젝트를 수행하던도중 Spring boot로 제작한 WAS에 첫 연결이 너무 느린 이유를 찾아보았다.'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={2} />
+
+## 개요
+
+포스팅하기 앞서, EC2에 WAS 배포를 수행한 [AWS에 WAS 배포하기](/blog/aws/aws-was) 포스팅을 보고 본 포스팅을 보는 것을 추천한다.
+
+<img src="/static/images/project/project-first-connet.png" width={500} />
+
+이번 포스팅의 주제는 여기어때 클론코딩을 하면서 사용한 WAS에 첫 네트워크 연결이 위 이미지 같이 너무 느렸던 문제를 해결하는 것이다. 프로젝트를 하면서 WAS의 동작 자체는 만족할 만큼 빠르지만, 신기하게 WAS에 첫 세션을 열때 어마어마하게 긴 대기시간이 걸렸던 문제가 있다.
+그래서 프로젝트를 진행하면서 팀 동료들에게 **너무 미안했다**.
+
+### 이번 포스팅을 통해서 왜 그런 문제가 있었는지, 어떻게 해결할 수 있는지 정리하고자한다.
+
+여기어때 클론코딩을 하면서 사용한 WAS를 old WAS, 그리고 이번에 새롭게 만든 WAS를 new WAS라고 하겠다. old WAS의 도메인은 `api.epicktrees.net`이고, new WAS의 도메인은 `asac.epicktrees.net`이다.
+
+old WAS의 특징을 간단히 소개하면 다음과 같다.
+
+1. https 통신
+2. Spring boot 프레임워크 사용
+3. Spring Security를 사용한 OAuth 로그인과 세션 관리
+
+위 특징들을 하나씩 따라가면서 어느 부분 때문에 첫 연결이 약 59초나 걸리는지 확인하고자한다.
+
+[이전 포스팅](/blog/aws/aws-was)을 통해 new WAS가 정상적으로 동작하고, old WAS에 문제가 있는 것은 확실해졌다. 하지만 (1) https 통신과 (2) Spring boot 때문은 아니라는 것이 자명하다.
+그럼 왜 그럴까? 남은 답은 Spring Security에 있을 것이다.
+
+## 그럼 Spring Security가 문제일까?
+
+new WAS에 Spring Security를 조금씩 추가하면서 원인을 찾아보자
