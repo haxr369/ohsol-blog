@@ -1,0 +1,86 @@
+---
+title: Transaction Isolation Level 4가지
+date: '2023-10-15'
+tags: ['db', 'Transaction']
+draft: false
+summary: 'DB 표준 에러와 그걸 방지하기 위한 방법들'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+이번 포스팅은 DB Transaction의 Isolation에 관한 포스팅이다. Transaction의 개요를 알고 싶다면, [Transaction은 무엇일까?](/blog/db/what-is-transaction) 포스팅을 참고하길 바란다.
+
+## Transaction이 동시에 실행될 때 발생하는 문제들.
+
+세가지 문제 상황을 가정해서 상상해보자.
+
+### Dirty read
+
+<img alt="Transactions" src="/static/images/db/db-transactions.png" />
+
+위 상황은 transaction1,2가 동시에 잘 실행되다가 갑자기 transaction2에 문제가 발생하고 rollback하면서 많은 것들이 꼬여버렸다.
+transaction2의 rollback으로 인해 transaction1의 `read(x)`의 결과는 70이 아니라 20으로 바꿔야한다. 즉 transaction1이 유효하지 않은 값을 읽어버린 것이다.
+
+위와 같이 commit되지 않은 변화를 읽은 상황을 **Dirty read**라고 한다.
+
+### Non-repeatable read, Fuzzy read
+
+또 다른 상황을 보자.
+
+<img alt="Transactions" src="/static/images/db/db-isolation.png" />
+
+위 상황은 transaction1이 변수 X를 두번 읽는 작업을 한 transaction에 수행했다. 그러나 transaction2의 작업으로 다른 값을 읽게되었다.
+위와 같은 상황은 transaction의 isolation 관점에서 보면 일어나선 안되는 것이다.
+
+왜냐하면 여러 transaction이 실행되더라도 각각의 transaction은 마치 혼자서 실행되는 것과 동일해야하는 것이 transaction의 isolation 속성이기 때문이다.
+만약 transaction1이 혼자 작업한다면 X는 동일하게 10이 읽혔을 것이다.
+
+위와 같이 isolation을 만족하지 못해서 같은 데이터 값이 달리는 경우 Non-repeatable read라고 한다.
+
+### Phantom read
+
+<img alt="Transactions" src="/static/images/db/db-phantom-read.png" />
+
+위 그림도 Isolation 관점에서 문제가 생긴 것이다. transaction1은 한 transaction에서 동일한 조건으로 데이터를 두 번 읽는데 결과가 다르게 나왔다. 그 이유는 transaction2의 영향 때문이다.
+따라서 이전에 읽을 때는 없던 값이 새롭게 **추가**됐기 때문에 **Phantom read** 현상이라한다.
+
+## Transaction Level의 등장
+
+위와 같은 이상한 현상들이 발생하는 이유는 두 transaction이 동시에 수행되기 때문이고, 이를 방지하기 위해 제약사항을 추가하면 동시 처리 가능한 트랜잭션 수가 줄어들어 DB의 전체 처리량이 하락하게 된다.
+DB 처리량의 감소를 원하지 않는 다면 일부 이상한 현상을 허용하는 몇 가지 Level을 만들어서 사용자가 필요에 따라 적절하게 선택할 수 있게하는 것
+
+1. **Read uncommitted** : 제약사항을 두지 않고 DB의 처리량을 최대화하는 Level
+2. **Read commited** : Dirty read만 허용
+3. **Repeatable read** : (2)에서 Non-repeatable read까지 허용
+4. **Serializable** : (3)에서 Phantom read 포함 모든 이상 현상이 발생핮 않는 Level
+
+이상한 현상을 정의하고 어디까지 허용할지를 결정하는 Level
+애플리케이션 설계자는 isolation level을 통해 전체 처리향과 데이터 일관성 사이에서 어느 정도 거래를 할 수 있다.
+
+## SNAPSHOT Isolation type of MVCC
+
+어떻게 데이터 일관성을 구현할지에 따라서 결정되는 level
+SNAPSHOT Isolation은 transaction이 실행되는 그 시점에 데이터를 따로 저장해둔다.
+또한 transaction에서 `write` 작업은 바로 DB에 반영되는 것이 아니라 SNAPSHOT에 1차로 반영하게 된다.
+
+위처럼 transaction을 진행하는 동안 SNAPSHOT에 데이터를 작성하고 읽는다렴, commit될 때까지 다른 transaction이 보는 DB는 변화가 없을 것이다.
+commit해서 DB가 변하면 다른 transaction이 시작하면 그 결과를 사용하게 된다.
+
+만약 transaction 중에 다른 transaction의 작업이 완료돼서 Commit까지 했다면, SNAPSHOT과 DB의 상태가 많이 달라져있을 것이다.
+이 경우 동일한 값에 쓰기 작업을 한 두 commit이 있을 때 먼저 commit한 transaction만 인정하고 나중에 commit한 transaction은 abort로 rollback해서 처음부터 다시 실행된다.
+
+1. transaction 시작 전에 commit된 데이터만 보임
+2. First committer가 우선되고, 나중 commit은 폐기된다.
+
+## 실무에서 Isolation level
+
+1. MySQL은 표준과 동일한 isolation level을 적용한다.
+2. Oracle은 Read commited와 Serializable만 사용히고, Read uncommitted은 지원하지 않는다.
+   - Oracle은 Repeatable read과 Serializable은 Serializable로 통칭해서 사용된다.
+   - Oracle은 Serializable을 구현할 때 SNAPSHOT Isolation을 적용했다.
+3. SQL server도 표준에서 정의된 isolation level을 적용하고 추가로 SNAPSHOT Isolation을 지원한다.
+4. PostgreSQL도 표준에서 정의된 isolation level을 적용한다.
+   - PostgreSQL은 표준에서 소개한 현상 뿐만 아니라 Serialization Anomaly라는 현상을 추가해서 level을 설명한다.
+   - PostgreSQL의 Repeatable read는 SNAPSHOT Isolation을 적용했다.

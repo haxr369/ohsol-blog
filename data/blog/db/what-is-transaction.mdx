@@ -1,0 +1,99 @@
+---
+title: 'Transaction은 무엇일까?'
+date: '2023-10-15'
+lastmod: '2023-10-15'
+tags: ['db', 'Transaction', 'ACID']
+draft: false
+summary: 'DB의 Transaction에대해 이해하자'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## Transaction이란?
+
+1. 단일한 논리적인 작업 단위
+2. 논리적인 이유로 여러 SQL문들을 단일 작업으로 묶어서 나눠질 수 없게 만든 것이 Transaction.
+3. Transaction의 SQL문 중에 일부만 성공해서 DB에 반영되는 일은 일어나지 않는다.
+
+예를 들어, 계좌 이체 상황이라고 가정하자. A가 B에게 계좌를 이체할 때 사용할 SQL문은 아래와 같이 2가지 SQL문을 사용할 수 있다.
+
+1. A의 계좌 값 20만원을 차감
+2. B의 계좌 값 20만원을 추가
+
+만약, 둘 중 하나라도 실패하면 `계좌 이체`라는 작업은 실패하게된다. 그렇기에 `계좌 이체`는 작업단위이고 Transaction이다.
+
+## MySQL에서 Transaction 예시
+
+아래 코드와 같이 Transaction 시작과 COMMIT 사이에 명령어들을 넣어 실행시킨다.
+
+```mysql:Transaction.sql
+
+START TRANSACTION; // Transaction 시작
+UPDATE account SET balance = balance - 200000 WHERE id='J';
+UPDATE account SET balance = balance + 200000 WHERE id='H';
+COMMIT; // 지금까지 작업을 DB에 영구적으로 저장, Transaction을 종료
+```
+
+만약, Transaction 다음 작업들을 취고하고 Transaction 이전 상태로 되돌리려면 RollBack하고 Transaction을 종료한다.
+
+```mysql:RollBack.sql
+
+START TRANSACTION; // Transaction 시작
+UPDATE account SET balance = balance - 200000 WHERE id='J';
+RollBack;
+```
+
+## SQL의 AUTOCOMMIT
+
+SQL문에서 AUTOCOMMIT이라는 명령어가 있다. 이 명령어는 SQL문이 성공적으로 실행하면 자동으로 Commit한다. 하지만, 실행 중에 문제가 생겼다면 자동으로 RollBack한다. MYSQL에서는 default로 AUTOCOMMIT이 enabled 되어 있다.
+
+`SELECT @@AUTOCOMMIT으로 MySQL의 AUTOCOMMIT 활성화 체그 `1`이면 활성화된 것
+
+그렇다면 Transaction은 왜 필요한가? Mysql에서 `START TRANSACTION` 실행과 동시에 AUTOCOMMIT은 off된다. 그리고 `COMMIT/RollBack`과 함께 Transaction이 종료되면 원래 AUTOCOMMIT 상태로 돌아간다.
+
+### 사실항 AUTOCOMMIT이 off된다는 것은 Transaction이 시작됨을 의미한다.
+
+## Spring에서 Transaction
+
+스프링과 같은 웹 애플리케이션이 DB 서버에 Transaction을 명령할 때 다음과 같은 작업을 수행해야한다.
+
+1. DB 서버와 connection 생성
+2. AUTOCOMMIT off
+3. 서비스 작업 수행 (ex, 계좌이체 sql문...)
+4. commit
+5. _작업 중간에 에러나면, rollback_
+6. 항상 마지막에는 AUTOCOMMIT On. 보통 DB 서버와 connection은 여러번 사용하기 때문에 기존 설정으로 되돌려야한다.
+
+그러나 3번 빼고는 전부 Transaction과 관련된 코드로, 서비스 코드와 Transaction 코드가 혼합되어 있어서 혼잡하다. 이를 위해 스프링 부트는 `@Transactional` 어노테이션을 지원한다. `@Transactional` 어노테이션은 Transaction과 관련된 작업을 대신 처리하고 개발자는 서비스 관련 로직만 작성하면 된다.
+
+## ACID
+
+Transaction이 가지고 있는 의미 4가지를 Atomicity, Consistency, Isolation, Durability
+의 앞 글자를 따서 ACID라고 한다.
+
+### Atomicity - 원자성
+
+ALL or Nothing. 즉, 한 작업 단위 (계좌 이체) 내부의 SQL문들이 모두 성공해야함을 의미한다. 작업 단위 중간에 SQL 문이 실패하면 지금까지의 작업을 모두 취소하여 아무 일도 없었던 것처럼 rollback한다.
+
+DBMS와 개발자는 각각 다른 책임을 가지는데 commit과 rollback으로 DB에 데이터를 영구적으로 저장하는 것과 이전 상태로 되돌리는 것은 DBMS가 담당하는 역할이다. 다만, 개발자는 commit과 rollback을 언제 할지 결정한다.
+
+### Consistency - 일관성
+
+DB에 규칙 (`constraints, trigger`)에 Transaction이 위반했다면, 즉시 rollback 해야 한다.
+DBMS는 Transaction이 DB의 규칙을 위반했는지 commit 전에 확인하고 알려줘야하고, 개발자는 서비스 작업의 Transaction이 Consistent하게 동작하는지 관리해야한다.
+
+### Isolation - 격리, 분리
+
+만약 한 Transaction이 실행되는 중간에 다른 Transaction이 실행되어 commit됐가고 가정하자, 그렇다면 기존 Transaction은 바뀐 DB의 상태도 모르고 기존 작업을 이어서하는 문제가 생길 수 있다.
+
+따라서 Isolation 속성, 여러 Transaction이 동시에 실행될 때도 혼자 실행되는 것처럼 동작하게 만들어야한다.
+Isolation Level이 엄격하게 적용할 수록 Transaction끼리 영향이 줄어들게되지만, 동시에 작업이 가능한 것도 못하게 되어 DBMS의 퍼포먼스가 줄어들 수 있다.
+
+그러므로 개발자는 Isolation Level 중에 어떤 level로 Transaction을 동작시킬지 설정할 수 있다.
+
+### Durability - 영존성
+
+DB system(ex pawer)에 문제가 생겨도 commit된 Transaction은 DB에 **영구적**으로 저장한다. 즉, `비휘발성 메모리`(HDD, SSD)에 저장함을 의미한다.
+기본적으로 Transaction의 Durabilitysms DBMS가 보장한다.
