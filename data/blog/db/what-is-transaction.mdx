@@ -1,7 +1,7 @@
 ---
 title: 'Transaction은 무엇일까?'
 date: '2023-10-15'
-lastmod: '2023-10-15'
+lastmod: '2023-10-17'
 tags: ['db', 'Transaction', 'ACID']
 draft: false
 summary: 'DB의 Transaction에대해 이해하자'
@@ -83,6 +83,10 @@ DBMS와 개발자는 각각 다른 책임을 가지는데 commit과 rollback으�
 
 DB에 규칙 (`constraints, trigger`)에 Transaction이 위반했다면, 즉시 rollback 해야 한다.
 DBMS는 Transaction이 DB의 규칙을 위반했는지 commit 전에 확인하고 알려줘야하고, 개발자는 서비스 작업의 Transaction이 Consistent하게 동작하는지 관리해야한다.
+
+또한, 일관성은 특정 object의 변화가 일어나면 그 object가 포함된 모든 table에 그 변화가 적용되어야함을 의미한다. 예를 들어 사용자 주소가 바뀐 경우, 예전 주소를 가진 테이블과 새로운 주소를 가진 테이블이 공존하면 데이터 일관성을 위배한 것이다.
+
+**따라서 모든 Transaction 이후에 DB는 Constraints나 trigger를 통해 작성된 규칙에 맞는 상태여야하고, 이를 통해 DB system의 모든 data points를 `적절하게` 읽을 수 있을 수 있다.**
 
 ### Isolation - 격리, 분리
 
