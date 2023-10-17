@@ -1,0 +1,154 @@
+---
+title: EC2 인스턴스 문제 해결하기
+date: '2023-10-17'
+lastmod: '2023-10-17'
+tags: ['AWS', 'OAuth', 'Spring', 'EC2']
+draft: false
+summary: '새로운 예제 프로젝트에 기존 프로젝트 코드를 조금씩 적용하면서 어느 부분에서 첫 접속이 느려지는 원인이 되는지 찾기'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={2} />
+
+## 개요
+
+포스팅하기 앞서, 문제 상황 인지를 위해 [첫 네트워크 연결이 느렸던 이유](/blog/aws/aws-was) 포스팅을 보고 본 포스팅을 보는 것을 추천한다.
+
+저번 포스팅에서 만든 `asac.epicktrees.net`의 WAS 서버에 Spring Security를 조금씩 추가해보면서 기존 프로젝트 문제의 원인을 찾아보려고 한다.
+최종적으로 Google OAuth 서비를 이용해서 인증을 수행하고, 인증 정보(Session ID)를 바탕으로 인가를 해보려고 한다.
+
+## Security 도입하기
+
+기본적으로 Security를 gradle 의존성에 추가하면 ID, PW certification 인증 방식이 기본으로 적용된다.
+아무런 Security 설정을 하지 않더라도 아래와 같이 어떤 요청을 하더라도 인증을 해야하도록 기본 설정돼있다.
+
+<img alt="default login page" src="/static/images/project/project-id-pwd-login.png" width="500" />
+
+기본으로 제공되는 password를 입력하면 아래 그림처럼 root 페이지로 넘어간다.
+따라서 기본 설정으로 Spring Security를 적용하는 부분은 문제가 없다.
+
+<img alt="login success" src="/static/images/project/project-id-pwd-sec.png" width="500" />
+
+## Security Config 작성해보기
+
+여러 기본 설정을 이용할 수 있지만, root 페이지를 인증 없이 요청할 수 있듯이 Custom한 설정을 부여하려면 Security Config에서 `SecurityFilterChain`을 작성하면된다.
+아래와 같이 SecurityConfig를 작성하면 root 페이지를 인증 없이 요청할 수 있고, 다른 요청을 하려면 login 페이지에서 인증을 받도록 설정된다.
+
+```java:SecurityConfig.java
+public class SecurityConfig {
+
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http.csrf(AbstractHttpConfigurer::disable)
+                .cors(withDefaults())
+                .headers(headers -> headers
+                        .frameOptions(HeadersConfigurer.FrameOptionsConfig::disable))
+                .authorizeHttpRequests(authorize -> authorize
+                        .requestMatchers("/login").permitAll()
+                        .requestMatchers("/").permitAll()
+                        .anyRequest().authenticated())
+                .formLogin((login) -> login
+                        .loginProcessingUrl("/"))
+                .logout((logout) -> logout
+                        .logoutSuccessUrl("/")  );
+        return http.build();
+    }
+}
+```
+
+위와 같이 **formLogin** 속성은 ID- PWD 기반 인증이지만 아래와 같이 **oauth2Login** 속성을 설정하면 OAuth를 통한 인증을 Security가 도와준다.
+
+```java:SecurityConfig.java
+public class SecurityConfig {
+
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http.csrf(AbstractHttpConfigurer::disable)
+                .cors(withDefaults())
+                .headers(headers -> headers
+                        .frameOptions(HeadersConfigurer.FrameOptionsConfig::disable))
+                .authorizeHttpRequests(authorize -> authorize
+                        .requestMatchers("/login").permitAll()
+                        .requestMatchers("/").permitAll()
+                        .anyRequest().authenticated())
+                .oauth2Login(oauth2Login -> oauth2Login // 위 코드와 차이점
+                        .loginProcessingUrl("/login")
+                        .redirectionEndpoint(redirectionEndpointConfig -> redirectionEndpointConfig
+                                .baseUri("/oauth2/code/*"))
+                        .defaultSuccessUrl("/"));
+        return http.build();
+    }
+}
+```
+
+하지만, OAuth를 사용하려면 Authorize Server를 제공하는 회사에 미리 우리 서비스에 대해서 알려줘야하고, 그에 맞게 OAuth 인증을 요청해야한다.
+세세한 요청 방법은 Spring Security가 해주지만, 요청 안에 들어가는 정보는 application.properties에 작성해야한다.
+
+```:application.properties
+# client registration facebook
+spring.security.oauth2.client.registration.facebook.client-id=[facebook client id]
+spring.security.oauth2.client.registration.facebook.client-secret=[facebook client secret]
+spring.security.oauth2.client.registration.facebook.authorization-grant-type=authorization_code
+# return
+spring.security.oauth2.client.registration.facebook.redirect-uri=http://localhost:8080/oauth2/code/{registrationId}
+# client registration facebook
+
+# google registration
+spring.security.oauth2.client.registration.google.client-id=[google client id]
+spring.security.oauth2.client.registration.google.client-secret=[google client secret]
+spring.security.oauth2.client.registration.google.authorization-grant-type=authorization_code
+spring.security.oauth2.client.registration.google.scope=profile, email
+spring.security.oauth2.client.registration.google.redirect-uri={baseUrl}/oauth2/code/{registrationId}
+
+```
+
+그렇다면 아래와 같이 **localhost**에서 OAuth 인증을 정상적으로 수행할 수 있는 것을 확인할 수 있다.
+아래 예시는 구글 OAuth를 통해 인증하는 과정이고 로컬에서는 별 문제 없이 빠르게 인증이 돼었다.
+
+<img
+  alt="default login page"
+  src="/static/images/project/project-local-oauth-sec.gif"
+  width="500"
+/>
+
+## EC2에서 실행해보기
+
+여기어때 프로젝트에서도 local 환경에서는 접속이 빠르게 이뤄졌지만, EC2에 배포하고 나서 갑자기 느려졌던 경험이 있다.
+그래서 이번에 만든 예제 프로젝트를 한번 EC2에 올려서 테스트 해보고자한다.
+아래는 `asactest.epicktrees.net에서 실험한 영상이다.
+
+<img alt="default login page" src="/static/images/project/project-ec2-oauth-sec.gif" width="500" />
+
+여기어때 프로젝트는 첫 접속에 오랜 시간이 걸리는 문제가 있는데 예제 프로젝트에는 그런 문제가 없이 잘 접속된다.
+현재 여기어때 프로젝트와 예제 프로젝트 사이 차이점은 코드 완성도와 RDS 연결의 차이가 있다.
+따라서 다음은 예제 프로젝트에 RDS를 연결해보고 테스트해봐야겠다.
+
+## 예제 프로젝트에 RDS 연결
+
+RDS 인스턴스 생성 및 EC2와 연결하고 EC2의 보안그룹이 RDS와 통신할 수 있도록 설정했다.
+
+<img alt="rds 연결 성공" src="/static/images/project/project-rds-suc.png" width="900" />
+
+위 이미지처럼 RDS를 연결해서 유저 정보를 구글에서 불러와서 저장하는 것을 확인했다. 그러나 이 과정에서 `api.epicktrees.net`에 연결할 때처럼 느린 접속은 경험하지 못했다.
+
+## 최후의 방법. 코드 복사하기
+
+https나 RDS 같은 인프라가 문제가 아니라면, 결국에는 코드에 문제가 있는 것을 알 수 있다.
+그 전에 혹시라도 인프라가 문제가 아니라는 것을 한번 더 증명하기 위해 `api.epicktrees.net`의 EC2에서 `asactest.epicktrees.net`의 코드를 실행해봐야겠다.
+
+아래는 예제 프로젝트의 코드를 RDS 연결만 바꾸고 `api.epicktrees.net`의 EC2에서 실행시킬때 첫 접속에 걸린 시간이다.
+즉 **어떠한 이유**로 `api.epicktrees.net`의 EC2가 정확하게 동작하지 않는 문제가 있는 것이다.
+
+<img alt="rds 연결 성공" src="/static/images/project/project-connect-slow.png" width="900" />
+
+## 뜻 밖의 원인, 크래딧
+
+https://www.youtube.com/watch?v=lmJBrtpJkNU
+
+멘토님과 함께 이 문제를 고민했더니 위 강의를 추천해주셨다. 강의를 참고하면 t2 micro 인스턴스는 제한된 크래딧을 가지고 있고, baseline 이상 cpu를 사용하면 크래딧이 차감되는 형식이다.
+여태 여기어때 프로젝트의 응답을 위해 `api.epicktrees.net` EC2의 크래딧을 사용하면서 결국엔 크래딧이 바닥났던 것이다.
+
+혹시 모르니 마지막으로 여기어때 프로젝트를 `asactest.epicktrees.net`의 EC2에서 실행시켰더니 너무 잘 실행됐다. 결국 EC2의 크래딧 문제가 맞는 것으로 결론이 났다.
+
+문제를 해결하기 위해 들인 시간에 비해 뜻 밖에 결론이 나와서 조금 찝찝한 느낌이 있지만, 다음에 이런 상황이 발생하면 과감하게 새로운 EC2 인스턴스를 생성하는 방법으로 문제를 해결해야겠다.
