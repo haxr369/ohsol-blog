@@ -1,0 +1,99 @@
+---
+title: DBMS 정리 (1)
+date: '2023-10-17'
+lastmod: '2023-10-17'
+tags: ['db', 'SQL', 'NoSQL']
+draft: false
+summary: 'DBMS와 SQL, NoSQL 특징 정리'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## DBMS 정의
+
+DBMS란? 데이터에 대한 스키마를 **정의(DDL), 저장 및 분석(DML)** 그리고 **관리**하는 응용 프로그램
+
+데이터베이스의 metadata는 database를 정의하거나 기술하는 data이다. metadata 또한 DBMS를 통해 저장, 관리된다.
+예를 들어 데이터 유형, 구조(스키마), 제약 조건, 인덱스, 사용자 그룹 등등
+
+DDL DML은 SQL database에서 객체를 관리하는 명령어의 집합
+
+- DDL
+
+  - Data Definition Language
+  - Database 객체(table, views, ...)를 생성, 수정, 그리고 제거하는데 사용되는 SQL 명령어 집합
+  - table은 데이터를 저장하는 구조를 정의하기 때문에 DDL로 조작된다.
+  - 예를 들어 Create, Alter, Drop 같은 명령어가 있다.
+
+- DML
+  - Data Manipulation Language
+  - table 안에 **data**를 관리하는 SQL 명령어 집합
+  - Insert, Update, Delete, Truncate
+
+## Relational data and SQL
+
+Relational database는 ACID를 통해 높은 신뢰성을 가진다. 특히, 2차원 행렬 구조로 데이터를 저장하고 각 테이블끼리 관계를 맺어 데이터 종속성을 표현한다.
+
+- 장점
+  - [transaction](/blog/db/what-is-transaction) 기술을 통해 고신뢰성, 데이터 무결성
+  - 인덱싱과 자체 쿼리 최적화를 통해 빠른 탐색 속도를 가짐
+- 단점
+  - 스키마를 수정하기 어렵다.
+  - 수평적 확장에 한계가 있다.
+    - Guaranteed Consistency 보장을 위해 대기시간이 길 수 있다.
+    - 몇일 안에 수 테라바이트가 쌓이는 상황에서 수직적 확장시, 매번 인스턴스 교체가 필요하다.
+  - 2차원 구조로 데이터를 저장하기 때문에 실제 트리 구조의 객체와 형태가 맞지 않다.
+    - ORM으로 객체와 테이블을 맵핑할 수 있다.
+
+RDBMS가 고신뢰성을 위해 transaction은 ACID 특성을 필수로 가져야한다.
+또한, DB 작업량을 높이기 위해 transaction을 동시에 실행시킨다. 하지만, transaction의 동시성이 높아지면 여러 문제가 생기면서 신뢰성이 낮아질 수 있다.
+그렇기 때문에 [Isolation Level](/blog/db/transaction-isolation)을 개발자가 서비스에 맞게 정해야한다.
+
+## Non-relational data and NoSQL
+
+RDBMS는 높은 신뢰성을 가지지만, Guaranteed Consistency를 위해 수평적 확장에 한계가 있었다.
+그래서 수평적 확장성과 가용성을 위해서 Non-relational database를 사용한다.
+다만, 분산된 database는 Guaranteed Consistency를 보장하진 못하고, 시간이 지나 동기화가 되면 Eventual Consistency가 된다.
+
+- 장점
+  - Schema-less
+    - 데이터가 어떤 형태인지 불확실하고, 복잡한 데이터를 테이블 관계로 표현하기 어렵기 때문에 데이터 그 자체를 저장
+  - 방대한 트래픽 처리
+    - NoSQL은 분산 처리가 가능하기 때문
+- 단점
+  - 데이터 무결성 제약이 관계형 DB만큼 강하지 않음
+
+NoSQL은 transaction을 지원하지 않고 당연히 ACID를 준수하지 않는다. 다만, BASE를 준수한다.
+
+### BASE 정책
+
+BASE는 데이터베이스의 일부 ACID 속성을 완화했고, 데이터의 일관성 관리를 DB에서 개발자로 이관했다.
+
+- Basically Available (기본적인 가용성)
+  - 분산 시스템의 특징, 부분 고장 시 나머지가 커버
+- Soft state
+  - 분산 노드 간 업데이트는 데이터가 노드에 도달한 시점에 갱신 : 한 노드가 업데이트됐더라도 다른 노드가 꼭 업데이트될 필요는 없다.
+  - 즉, 서로 다른 복제본이 항상 상호 일관성이 있을 필요가 없다.
+- Eventual Consistency
+  - ACID에서의 Consistency 보다 훨씬 느슨
+  - 한 노드에 변화가 생길 때 일시적으로 다른 노드와 일관성이 깨지는 상태
+    - 분산 시스템 특성 상, 일부에선 최신 상태를 가지나, 나머지 일부에선 아님
+  - 일정 시간 후에는 전체 분산 시스템에 일관성이 있는 상태가 되는 성질
+
+### NoSQL 종류
+
+1. Key-Value DB : Redis, AWS DynamoDB
+2. Document DB (key-value 확장) : MongoDB, CouchDB
+3. Column DB : Cassandra
+   - 특정 컬럼 데이터를 빠르게 분석할 수 있다.
+   - 다만, `Select *` 같이 여러 컬럼을 검색하는데는 느리고, row를 업데이트하는 것도 흩어져있는 모든 컬럼을 업데이트해야하기 때문에 느리다.
+
+### CAP Theory
+
+분산 시스템은 CAP Theory의 3가지 특성 중 2가지까지만 보장할 수 있다. 다만, CA 데이터베이스는 고가용성, 고일관성인데 이는 NoSQL이 아닌 SQL로 분류된다. 따라서 NoSQL은 CA 데이터베이스가 될 수 없다.
+
+1. Consistency (일관성) : Update, Insert, Delete시 모든 노드가 같은 값을 가져야함
+2. Availablity (가용성) : 분산 시스템 중 일부가 실패해도 나머지는 정상적으로 서비스할 수 있어야함
+3. Partition Tolerance (파티션 허용 오차) : 네트워크나 시스템게 장애가 일어나도 동작할 수 있어아햠. 내결함성

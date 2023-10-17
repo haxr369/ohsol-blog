@@ -1,0 +1,58 @@
+---
+title: DBMS 정리 (2)
+date: '2023-10-17'
+lastmod: '2023-10-17'
+tags: ['db', 'Scaling', 'Concurrency']
+draft: false
+summary: '데이터베이스 확장과 동시성 제어'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 데이터베이스 확장
+
+대규모 데이터베이스 시스템에서 **부하 분산** 및 **확장성**을 위함
+
+- Partitioning : 하나의 테이블을 여러 데이터로 쪼개어 저장하는 것
+  - Vertical Partitioning : 컬럼을 쪼개기
+  - Horizontal Partitioning : 로우 쪼개기 (ex Sharding : 로우를 쪼개서 분산 시스템에 각각 저장)
+    <img alt="sharding db system" src="/static/images/db/db-sharding.png" width="500" />
+- Replication : 같은 데이터를 여러 분산 노드에 저장
+  - 쓰기 담당 / 읽기 담당을 나누어, **쓰기 발생 시 읽기 담당에 모두 동기화**를 맞춰야한다.
+
+## 데이터베이스 동시성 제어
+
+### Pessimistic Locking
+
+항상 충돌날 것을 예상하고 매 요청마다 Lock 설정 (Throughput 하락).
+읽기와 쓰기 중 쓰기 비중이 높을 때 사용
+
+- 쓰기 Lock이 읽기 Lock을 기다린다.
+- Lock으로 충돌을 미리 방지하기 때문에 Rollback을 통해 작업한 내용을 날릴 일이 적다.
+- 데이터 무결성 보장 수준이 높으나 동시성이 떨어짐
+
+**Lock-based Concurrency Control**
+
+- 2 Phase Locking
+  - 쓰는 동안 읽기를 거부
+  - 읽는 동안 쓰기를 거부
+
+### Optimistic Locking
+
+충돌을 예상하지 않고 Lock 없이 모든 작업 수행 (Throughput 상승).
+읽기와 쓰기 중 읽기 비중이 높을 때 사용한다.
+
+- 업데이트 진행하고 데이터 Version up, Version 칼럼을 통해 관리할 수 있다.
+- 만약 버전이 맞지 않으면 에러를 발생시키고 Rollback 시킨다.
+
+따라서 동시성은 좋으나, 데이터 무결성 수준이 비교적 낮고 그에 따라 개발자가 데이터 무결성을 위해 에러를 관리해야한다.
+
+- Timestamp-based Concurrency Control
+  - 모든 transaction은 시작할 때 Timestamp를 system이 찍어준다. Timestamp는 시간이 지나거나 순서에 따라 더 커진다.
+  - 만약 한 transaction이 데이터에 접근할 때, 데이터를 업데이트한 최신 transaction의 Timestamp 보다 작다면, abort(Rollback)되고 새로운 Timestamp를 찍고 새롭게 시작한다.
+- Multiversion Concurrency Control
+  - transaction을 시작할 때, 접근할 데이터를 DB에서 복사해서 메모리에 올려둔다.
+  - transaction은 복사본을 업데이트하고 새로운 버전으로 DB에 저장한다.
+    - 예를 들어 [Snapshot Isolation](/blog/db/transaction-isolation#snapshot-isolation-type-of-mvcc)은 모든 transaction 시작에 버전을 만들고 두 transaction이 DB를 업데이트하려고 할 때, 먼저 생성된 transaction의 업데이트만 인정하고 나중 것은 abort된다.
