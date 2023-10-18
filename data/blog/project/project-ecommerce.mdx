@@ -9,7 +9,7 @@ summary: '쿠팡 이커머스에서 상품 조회, 주문, 결제, 그리고 리
 
 ## 목차
 
-<TOCInline toc={props.toc} exclude="목차" toHeading={2} />
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
 
 ## 개요
 
@@ -44,30 +44,127 @@ Product 엔티티와 Product Option 엔티티가 나뉘어진 이유는 한 상�
 
 ## 서비스를 위한 쿼리 작성해보기
 
-1. [상품 디테일 페이지](https://www.coupang.com/vp/products/7400323975?itemId=19153028948&vendorItemId=86292117392&q=%EB%A7%A5%EB%B6%81+%EC%97%90%EC%96%B4+15%EC%9D%B8%EC%B9%98&itemsCount=36&searchId=a2a666a1b1ff489cb15fac21a1647006&rank=1&isAddedCart=)
+### 1. [상품 디테일 페이지](https://www.coupang.com/vp/products/7400323975?itemId=19153028948&vendorItemId=86292117392&q=%EB%A7%A5%EB%B6%81+%EC%97%90%EC%96%B4+15%EC%9D%B8%EC%B9%98&itemsCount=36&searchId=a2a666a1b1ff489cb15fac21a1647006&rank=1&isAddedCart=)
 
-   - 상품 디테일 정보 조회 쿼리
-     - ERD를 참고했을 때, 상품 디테일 페이지를 구성할 때 상품 엔티티이외에 필요한 엔티티는 상품 컨텐츠와 상품 옵션이 필요하다.
-     - 따라서 ProductContent와 ProductOption에서 상품 id로 Product와 join해야한다.
+- 상품 디테일 정보 조회 쿼리
+  - ERD를 참고했을 때, 상품 디테일 페이지를 구성할 때 상품 엔티티이외에 필요한 엔티티는 상품 컨텐츠와 상품 옵션이 필요하다.
+  - 따라서 ProductContent와 ProductOption에서 상품 id로 Product와 join해야한다.
+  - INNER JOIN을 통해 혹시라도 null 값을 발생시키지 않도록한다.
+  - productId가 123인 상품 정보를 가져오는 쿼리는 아래와 같다.
 
-   ```sql:productDetail.sql
+```sql:productDetail.sql
+ SELECT * FROM `Product`
+ INNER JOIN `ProductContent` ON
+ `Product`.`productId` = `ProductContent`.`productId`
+ INNER JOIN `ProductOption` ON
+ `Product`.`productId` = `ProductOption`.`productId`
+ WHERE `Product`.`productId` = 16;
+```
 
+- 상품평 조회 쿼리
+  - 상품 상세 페이지에서 상품평(리뷰) 데이터를 얻기위해선 UserReview 테이블에서 찾아야한다.
+  - 특정 상품의 상품평을 가져오려면 WHERE 문을 사용하면 된다.
 
+```sql:CheckProductReviews.sql
+ SELECT * FROM UserReview
+ WHERE UserReview.productId = 15;
+```
 
-   ```
+- 상품 구매 추가 쿼리
+  - 상품 상세 페이지에서 상품을 구매하려면 몇가지 단계를 지나야한다.
+  - 먼저 유저의 주문을 생성한다. 여기에는 주문의 배송 정보와 총 금액이 있다.
+  - 그다음 상세 주문 내용을 삽입한다. 여기에는 상품의 세부 정보가 있다.
+  - 마지막으로 결제 내용을 저장한다.
 
-   - 상품평 조회 쿼리
+```sql:CreateOrder.sql
 
-   ```sql:productDetail.sql
+   -- 주문 생성
+ INSERT INTO `Orders` (`orderId`, `userId`, `orderDate`, `recipientName`, `recipientAddress`, `recipientPhoneNumber`, `request`, `totalPrice`)
+ VALUES ('[주문번호]', '[사용자번호]', '[주문시간]', '[받는사람이름]', '[받는주소]', '[연락처]', '[요청사항]', '[총주문금액]');
 
+ -- 상세 주문 생성
+ INSERT INTO `DetailOrder` (`detailOrderId`, `orderId`, `optionId`, `productId`, `detailOrderPrice`, `quantity`)
+ VALUES ('[상세주문번호]', '[주문번호]', '[옵션번호]', '[상품번호]', '[상세주문가격]', '[수량]');
 
+ -- 결제 내용 저장
+ INSERT INTO `Payment` (`paymentId`, `orderId`, `paymentPrice`, `paymentDate`, `paymentMethod`)
+ VALUES ('[결제번호]', '[주문번호]', '[결제금액]', '[결제시간]', '[결제수단]');
+```
 
-   ```
+### 2. MY 쿠팡 내 주문 리스트 페이지
 
-   - 상품 구매 추가 쿼리
+- 주문 리스트 조회 쿼리
+  - MY 쿠팡 페이지에서 주문 리스트를 보려면 사용자 id로 Order 테이블의 데이터를 수집해야한다.
+  - 또한 어떤 물품의 어떤 옵션으로 구매했는지 보려면 DetailOrder의 데이터도 JOIN으로 가져와야한다.
+  - 나는 특정 유저 번호의 주문 데이터와 그 주문 번호와 같은 주문 번호를 가진 상세 주문 데이터를 가져올 것이다.
 
-   ```sql:productDetail.sql
+```sql:CreateOrderList.sql
+SELECT * FROM `Orders`
+INNER JOIN `DetailOrder` ON
+`Orders`.`orderId` = `DetailOrder`.`orderId`
+WHERE `Orders`.`userId` = 1;
+```
 
+### 3. MY 쿠팡 내 주문 상세 페이지
 
+- 주문 상세 조회 쿼리
 
-   ```
+  - 특정 주문 번호를 알고 있을 때, 그 주문의 상세 정보를 찾는 쿼리
+  - 그러기 위해선 Order, DetailOrder, 그리고 Payment를 JOIN해야한다.
+
+```sql:OrderDetailsInquiry.sql
+SELECT * FROM `Orders`
+INNER JOIN `DetailOrder` ON
+`Orders`.`orderId` = `DetailOrder`.`orderId`
+INNER JOIN `Payment` ON
+`Orders`.`orderId` = `Payment`.`orderId`
+WHERE `Orders`.`orderId` = 3;
+```
+
+## 테스트해보기
+
+ChatGPT를 이용해 수 많은 더미 데이터를 넣고 작성한 쿼리를 테스트해보겠다.
+
+### 상품 디테일 정보 조회 쿼리 결과
+
+```
+productId,sellerId,registrationDate,productName,countryOfManufacture,weight,kcCertificationInformation,manufacturer,importer,contentId,productId,contentImgUrl,optionId,productId,price,optionTitle,optionImgUrl
+16,3,2023-03-04,Smart TV 55,Japan,30.0 lbs,KC77777,Tech Corp,Tech Imports,8,16,product_16_image_1.jpg,7,16,800,55-inch,tv_option_1.jpg
+16,3,2023-03-04,Smart TV 55,Japan,30.0 lbs,KC77777,Tech Corp,Tech Imports,8,16,product_16_image_1.jpg,8,16,1000,65-inch,tv_option_2.jpg
+```
+
+동일한 상품 번호를 사용해서 두가지 다른 옵션의 상품 상세 정보를 얻을 수 있었다.
+
+### 상품평 조회 쿼리 결과
+
+```
+reviewId,userId,optionId,productId,starRate,review,reviewImgUrl,summary
+5,2,5,15,4,"Nice tablet, fast performance.",userreview_5.jpg,Satisfactory
+6,2,6,15,5,Amazing display and good battery life.,userreview_6.jpg,Outstanding
+```
+
+동일한 상품 번호에 대해 다른 옵션의 상품평을 남긴 것을 확인할 수 있다.
+
+### 주문 리스트 페이지 쿼리 결과
+
+```
+orderId,userId,orderDate,recipientName,recipientAddress,recipientPhoneNumber,request,totalPrice,detailOrderId,orderId,optionId,productId,detailOrderPrice,quantity
+1,1,2023-03-01,John Doe,123 Main St,123-456-7890,Urgent delivery,100,1,1,1,13,100,1
+2,1,2023-03-02,John Doe,123 Main St,123-456-7890,Gift wrapping,150,2,2,3,14,200,2
+```
+
+동일한 사람이 다른 상품을 주문한 것을 확인할 수 있다.
+
+### 주문 상세 페이지 쿼리 결과
+
+```
+orderId,userId,orderDate,recipientName,recipientAddress,recipientPhoneNumber,request,totalPrice,detailOrderId,orderId,optionId,productId,detailOrderPrice,quantity,paymentId,orderId,paymentPrice,paymentDate,paymentMethod
+3,2,2023-03-03,Jane Smith,456 Elm St,987-654-3210,Standard delivery,80,3,3,5,15,50,3,3,3,150,2023-10-12,Credit Card
+3,2,2023-03-03,Jane Smith,456 Elm St,987-654-3210,Standard delivery,80,7,3,5,15,70,2,3,3,150,2023-10-12,Credit Card
+3,2,2023-03-03,Jane Smith,456 Elm St,987-654-3210,Standard delivery,80,8,3,6,15,80,1,3,3,150,2023-10-12,Credit Card
+3,2,2023-03-03,Jane Smith,456 Elm St,987-654-3210,Standard delivery,80,9,3,5,16,850,2,3,3,150,2023-10-12,Credit Card
+3,2,2023-03-03,Jane Smith,456 Elm St,987-654-3210,Standard delivery,80,10,3,6,16,1050,1,3,3,150,2023-10-12,Credit Card
+3,2,2023-03-03,Jane Smith,456 Elm St,987-654-3210,Standard delivery,80,11,3,5,17,60,3,3,3,150,2023-10-12,Credit Card
+```
+
+주문과 결제는 1대 0~1 관계이기 때문에 똑같은 값만 나온다. 다만, 상세 주문 데이터가 여러개인 것을 확인할 수 있다.
