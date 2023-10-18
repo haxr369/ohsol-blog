@@ -1,0 +1,78 @@
+---
+title: AWS EC2 정리
+date: 2023-10-17
+lastmod: 2023-10-19
+tags: ['AWS', 'EC2']
+draft: false
+summary: 'AWS EC2 관련 서비스 정리하기'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={2} />
+
+## EC2 개요
+
+EC2란 Elastic Compute Cloutd의 약자 = Infrastructure as a Service
+
+EC2가 실질적으로 제공하는 서비스
+
+1. EC2라는 가상 머신
+2. EBS라는 가상 드라이브에 데이터 저장
+3. ELB라는 로드벨런서로 부하 분산
+4. ASG라는 오토 스케일링 기능
+
+EC2의 옵션
+
+1. 운영체제
+2. CPU 파워와 코어 수
+   3, RAM 크기
+3. 저장소 크기 (EBS, EFS, EC2 instance store)
+4. 네트워크 카드 속도, 공용 IP 주소 설정
+5. Security Group이라는 방화벽 설정
+6. EC2 User Data라고 EC2 첫 시작 때 실행시키는 Bootstrap script를 설정
+   - update 설치
+   - Software 설치
+   - 인터넷에서 파일 다운로드 같이 원하는 작업을 설정할 수 있다.
+   - EC2 User Data Script는 인스턴스의 root user 권한으로 실행된다. (Sudo 권한)
+
+Bootstrap이란?
+
+머신이 시작할 때 첫번째로 한번 실행하는 명령 스크립트 EC2에서는 EC2 User Data라고 한다.
+
+EC2 인스턴스 종류
+
+<img alt="ec2 인스턴스 종류" src="/static/images/aws/aws-ec2-instance.png" />
+
+## EC2 시작 설정
+
+EC2 인스턴스 생성 설정
+
+1. 인스턴스 이름
+2. 운영체제 선택
+3. 인스턴스 타입 선택
+4. 키 페어 생성
+   - SSH 로그인을 위해 필요함
+5. 보안그룹(SG) 설정
+   - EC2에서 웹 서버를 실행하려면 HTTP 트래픽을 허용하도록 설정해야한다.
+6. 저장소 설정
+   - 일단 기본 사용
+7. 고급 세부 정보에서 User Data 설정
+
+   - EC2가 처음 시작할 때 명령어 예시로 아래와 같이 작성
+   - 인스턴스가 처음 실행될 때 딱 한번 실행되는 명령어
+
+   ```
+    #!/bin/bash
+    # Use this for your user data (script from top to bottom)
+
+    # install httpd (Linux 2 version)
+
+    yum update -y
+    yum install -y httpd
+    systemctl start httpd
+    systemctl enable httpd
+    echo "<h1>Hello World from $(hostname -f)</h1>" > /var/www/html/index.html
+   ```
+
+EC2의 인스선스를 제거하고 싶진 않지만, 요금이 두려울 때는 인스턴스 상태를 중지로 해놓으면 된다. 삭제되지 않지만, 요금은 나오지 않는다. 다만, 인스턴스를 중지했다가 나중에 다시 시작하면, 인스턴스의 공개 IPv4를 바꾸기도 한다. 하지만, 프라이빗 IP는 바뀌지 않는다.

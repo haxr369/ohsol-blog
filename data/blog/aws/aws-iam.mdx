@@ -1,7 +1,7 @@
 ---
 title: AWS IAM 및 CLI
 date: 2023-10-17
-lastmod: 2023-10-18
+lastmod: 2023-10-19
 tags: ['AWS', 'IAM']
 draft: false
 summary: 'AWS IAM으로 계정 관리하기'
@@ -83,6 +83,7 @@ MFA는 비밀번호와 보안장치를 함께 사용하여 비밀번호가 유�
 1. AWS Management Console : 이름 및 비밀번호 (+ MFA)로 인증
 2. AWS Command Lin Interface(CLI) : protected by access keys -> 터미널에서 aws 리소스에 접속할 때 사용
 3. AWS Software Developer Kit (SDK) : protected by access keys -> 애플리케이션에서 AWS의 API를 호출할 때 사용
+4. AWS Cloud Shell : 아직 제한된 regions만 이용 가능! 서울 region은 사용못한다. -> 클라우드로 동작하는 터미널 서비스, 그리고 파일 업로드 다운로드가 가능!
 
 access key는 비밀번호와 마찬가지 역할을 하기 때문에 공유하거나 잊어버리면 안된다.
 
@@ -117,3 +118,83 @@ aws iam list-users
 ```
 
 만약 admin이라는 유저가 사용자 그룹에서 퇴출되는 등 권한을 잃는다면, CLI로 aws에 요청해도 아무런 응답이 오지 않을 것이다.
+
+## IAM Roles for Services
+
+AWS 서비스는 사용자를 대신해 작업을 수행할 수 있다. 이때, AWS 서비스는 그에 맞는 권한을 가지고 있어야한다. 마치 사용자처럼!!
+AWS 서비스에 권한을 IAM Role로 부여할 수 있다.
+
+예를 들어 EC2 인스턴스와 그에 부여된 IAM Role은 하나의 엔티티로 구성된다. 만약, EC2가 AWS에 정보를 요청하면 AWS는 EC2의 IAM Role을 확인하고 적절한 IAM Role이 있다면, 요청에 응답한다.
+
+EC2에만 Role이 있지 않고, Lambda나 CloudFormation에도 IAM Role이 있다.
+
+### IAM Role 만들기
+
+1. IAM > 역할 페이지 접속
+2. 역할 만들기 버튼 클릭
+3. 신뢰할 수 있는 엔티티 타입 지정
+   - 다른 유형은 시험 범위가 아니고 AWS 서비스만 만들면 된다.
+   - 모든 AWS 서비스에대해 Role을 부여할 수 있다.
+   - 보통 EC2나 Lambda를 많이 사용한다.
+4. 사용자처럼 Role에 정책과 권한을 할당한다.
+   - 실습에서는 IAMReadOnlyAccess를 사용한다.
+   - 아래 코드는 Role의 정책인데 사용자의 것과 매우 유사하다.
+   ```:신뢰정책.json
+   {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "sts:AssumeRole"
+            ],
+            "Principal": {
+                "Service": [
+                    "ec2.amazonaws.com"
+                ]
+            }
+        }
+    ]
+   }
+   ```
+
+## IAM Security Tools
+
+- IAM Credentials Report (계정 수준)
+  - 계정에 있는 다양한 사용자들의 다양한 자격 증명의 상태를 보여줌
+  - 계정 사용자들의 비밀번호 사용이나 MFA 사용 또는 access key 사용 같은 상태를 볼 수 있다.
+  - 보안적으로 어떤 유저를 주목해야하는지 알 수 있음
+- IAM Access Advisor (사용자 수준)
+  - 사용자에게 부여된 서비스 권한 확인
+  - 4시간 이내에 해당 서비스에 마지막으로 접속한 시간 확인 가능
+  - 최소 권한 원칙을 적용할 때 도움되는 것이 어떤 권한이 사용되지 않는지 볼 수 있어 권한을 축소시킬 수 있다.
+
+<img alt="aws-iam-access-advisor" src="/static/images/aws/aws-iam-access-advisor.png" />
+
+위 그림을 보면 `최근 접속 시간`이 오늘인 서비스가 있는 반면, `추적 기간에 액세스되지 않음`인 서비스들이 있다. 이렇게 사용하지 않는 서비스들의 권한은 제거하는 것이 좋다!
+
+## IAM 가이드라인 & Best Practices
+
+1. 루트 계정은 AWS 계정을 설정할 때를 제외하고 사용하지 않는다.
+2. One physical user = One AWS user
+3. 사용자를 그룹에 넣고, 그룹 수준으로 보안을 관리하자
+4. 비밀번호 정책을 강화하고, MFA를 꼭 사용하자
+5. AWS 서비스에도 사용자처럼 제한된 IAM Role을 부여하자
+6. CLI나 SDK를 사용해서 AWS 서비스를 호출하는 프로그래밍을 할 때 꼭 Access Key를 사용하자
+7. 계정 권한을 감사할 때는 IAM Credentials Report와 IAM Access Advisor를 사용하자
+8. 절대로 IAM 유저와 access key를 공유하면 안된다.
+
+## IAM 정리
+
+1. User는 회사 내 실 사용자이며, aws console의 비밀번호를 가진다.
+2. Groups는 사용자들의 모임이며, 다른 그룹을 포함하면 안된다.
+3. IAM Policies는 User나 Groups의 IAM 정책을 설정하느 Json형식의 문서
+   - version과 statement로 구성
+   - statement는 다시 Sid, Effect, Action, Principal, Resource, 그리고 Condition으로 구성된다.
+4. Security를 위해서 MFA나 강력한 비밀번호 정책을 사용하자
+5. Access Key는 CLI나 SDK로 AWS 서비스에 접속할 때 사용한다.
+6. Audit(감사)할 때 IAM Credentials Report를 보거나 IAM Access Advisor를 참고할 수 있다.
+7. IAM 권한 원칙은 **최소 권한 부여**가 원칙이다.
+8. AWS Shared Responsibility Model
+   - AWS의 책임은 클라우드의 보안. 즉 인프라의 보안이다.
+   - 유저의 책임은 클라우드 안에서 보안. 즉 정책 설정과 비밀번호, access key 관리다.
