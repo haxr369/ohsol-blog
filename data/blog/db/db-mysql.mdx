@@ -1,0 +1,274 @@
+---
+title: Mysql 문법 정리
+date: '2023-10-20'
+lastmod: '2023-10-21'
+tags: ['db', 'SQL', 'MySQL']
+draft: false
+summary: '프로그래머스 SQL 문제 풀면서 몰랐던 문법 정리'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## MySQL NULL 처리
+
+해당 Column 값이 NULL을 반환할 때, 다른 값을 출력할 수 있도록 하는 함수
+
+```sql:ISNULL.sql
+SELECT PT_NO, PT_NAME, GEND_CD, AGE, IFNULL(TLNO, "NONE") as TLNO FROM PATIENT;
+```
+
+그리고 필드에 직접 **NULL**을 넣고싶다면 아래와 같이 따옴표 없이 사용해야한다.
+
+```
+SELECT PRODUCT_ID, NULL AS USER_ID FROM OFFLINE_SALE
+```
+
+## CASE
+
+해당 Column 값을 조건식을 통해 T,F를 판단하여 조건에 맞게 값을 변환할 수 있다.
+
+```sql:caseEnd.sql
+SELECT
+    CASE
+        WHEN TLNO IS NULL THEN "NONE"
+        ELSE TLNO
+    END  AS TLNO
+    FROM PATIENT
+WHERE AGE <= 12;
+```
+
+## 테이블 조회 정렬
+
+오름차순(ASC) 또는 내림차순(DESC)로 `ORDER BY`를 이용해서 정렬할 수 있다.
+
+아래 코드를 보면 환자 이름이 뒤죽박죽 섞여있음을 알 수 있다.
+
+```sql:orderBynon.sql
+SELECT PT_NO, PT_NAME, GEND_CD, AGE, IFNULL(TLNO, "NONE") as TLNO FROM PATIENT
+WHERE GEND_CD = "W" AND AGE<=12;
+```
+
+`ORDER BY`를 적용하면 특정 열에 대해서 내림차순과 오름차순을 지정할 수 있다.
+
+```sql:orderBy.sql
+SELECT PT_NAME, PT_NO , GEND_CD, AGE, IFNULL(TLNO, "NONE") as TLNO FROM PATIENT
+WHERE GEND_CD = "W" AND AGE<=12
+ORDER BY AGE DESC, PT_NAME ASC;
+```
+
+### 집계 함수
+
+- COUNT : 조건에 따른 행 개수를 계산
+  - DISTINCT를 괄호 안에 추가하면 중복을 제거햐여 연산한다.
+- SUM : 지정된 숫자열의 모든 값의 총합을 계산
+- AVG : 지정된 숫자열의 평귭 값을 계산
+- ROUND : 반올림
+- MAX : 해당 열의 최대값 하나 반환
+- MIN : 해당 열의 최소값 하나 반환
+
+  ```
+  -- 소수점 1자리만 남도록 반올림
+  SELECT ROUND(AVG(AGE), 1) FROM PEOPLE;
+
+  -- 특정 열만 남기고 최대 날짜를 가진 값 하나만 출력
+  SELECT NAME FROM ANIMAL_INS
+  WHERE DATETIME = (SELECT MAX(DATETIME) FROM ANIMAL_INS);
+
+  ```
+
+## GROUP BY, 조건에 따라 집계된 값을 가져옴
+
+```
+SELECT Country FROM Customers
+GROUP BY Country, NAME;
+```
+
+만약 `GROUP BY`로 두개의 행을 묶었다면 `WHERE` 절을 사용할 수 없다.
+대신 `HAVING`을 똑같이 사용하는데 `GROUP BY` 앞에 쓰는 `WHERE`와 달리 뒤에 쓴다!!
+
+### 그룹 내에서 특정 조건의 값 찾기
+
+GROUP BY로 만든 그룸 안에서 최대 값 같이 특정 값을 찾는 방법은 WHERE 안에서 SELECT하는 것이다 아래는 그 예시
+
+```sql:selectInWhere.sql
+SELECT FOOD_TYPE,	REST_ID,	REST_NAME,	FAVORITES
+FROM REST_INFO R
+WHERE FAVORITES = (SELECT MAX(FAVORITES) FROM REST_INFO
+                  WHERE R.FOOD_TYPE = FOOD_TYPE)
+GROUP BY FOOD_TYPE
+ORDER BY FOOD_TYPE DESC
+```
+
+## Like, 특정 문자 포함 검색
+
+아래와 같이 LIKE문을 사용해서 문자가 값에 포함됐는지 확인할 수 있다.
+
+```sql:like.sql
+SELECT REST_INFO.REST_ID,	REST_INFO.REST_NAME, FOOD_TYPE,	FAVORITES,	ADDRESS
+FROM REST_INFO
+WHERE ADDRESS LIKE '서울%';
+```
+
+`WHERE [필드명] LIKE '%특정문자열%';`
+
+SELECT REST_INFO.REST_ID, REST_INFO.REST_NAME, FOOD_TYPE, FAVORITES, ADDRESS
+FROM REST_INFO
+LEFT JOIN REST_REVIEW
+ON REST_INFO.REST_ID = REST_REVIEW.REST_ID
+WHERE ADDRESS LIKE '서울%';
+
+## DATE 포멧, 날짜/시간 표기 방식 지정하기
+
+```
+YEAR([DATE 값]) = 2021 // 년
+%M = February // 월
+%m = 02 // 월
+MONTH([DATE 값]) = 2 // 월
+%e = 2 // 일
+%d = 23 // 일
+HOUR([DATE 값]) = 9 // 시간
+%H = 09 // 시간
+%i=59 // 분
+%s=59 // 초
+```
+
+`DATE_FORMAT([칼럼 이름], '%Y-%m-%d')`은 `2023-10-20` 형식으로 출력한다.
+
+## BETWEEN with WHERE 날짜와 날짜 사이
+
+`DATE_FORMAT([칼럼 이름], '%Y-%m-%d')`의 결과가 특정 날짜와 날짜 사이에 있는지 확인하려면 아래와 같이 사용할 수 있다. 아래 쿼리의 결과는 날짜가 **2022-01**부터 **2022-03**월까지 데이터를 선택한다.
+
+```sql:betweenAnd.sql
+SELECT DATE_FORMAT(SALES_DATE, "%Y-%m-%d") AS SALES_DATE, PRODUCT_ID, "NULL" AS USER_ID, SALES_AMOUNT FROM OFFLINE_SALE
+WHERE DATE_FORMAT(SALES_DATE, "%Y-%m") BETWEEN '2022-01' AND '2023-03'
+
+```
+
+## UNION 두 테이블을 합치기
+
+`UNION` 명령어는 두 `SELECT`문으로 만든 테이블을 합칠 수 있고, 중복을 제거해준다.
+`UNION ALL` 명령어도 합치지만, 중복을 포함한다.
+
+```sql:union.sql
+SELECT SALES_DATE,	PRODUCT_ID	,SALES_AMOUNT FROM ONLINE_SALE
+UNION
+SELECT SALES_DATE,	PRODUCT_ID,	SALES_AMOUNT FROM OFFLINE_SALE
+```
+
+이때 `WHERE` 문은 각각의 `SELECT`에 적용되어야한다.
+
+## 조건의 값이 존재하는지 확인
+
+### EXISTS
+
+`EXISTS`는 조건을 만족하는 데이터가 1건이라도 존재하면 스캔을 종료한다.
+
+```sql:exists.sql
+SELECT EXISTS (SELECT * FROM CAR_RENTAL_COMPANY_RENTAL_HISTORY
+              WHERE START_DATE<= '2022-10-16' AND END_DATE<'2022-10-16')
+```
+
+### IN
+
+`[조건 열] IN (조건 리스트)` 연산자는 조건 열의 범위를 지정하는데 사용된다. 괄호 내의 값이 하나라도 있으면 TRUE로 판단한다.
+
+```sql:inSample.sql
+WHEN CAR_ID IN (SELECT CAR_ID FROM CAR_RENTAL_COMPANY_RENTAL_HISTORY
+                WHERE START_DATE <= '2022-10-16'
+                  AND END_DATE >= '2022-10-16') THEN '대여중'
+```
+
+아래는 전체 사용 예시
+CAR_ID라는 열로 그룹핑을 하지만, 그 그룹 안에 특정 조건의 값이 포함된 경우 그룹의 AVAILABILITY를 정하는 쿼리
+
+```sql:in.sql
+SELECT
+    CAR_ID,
+    CASE
+        WHEN CAR_ID IN (SELECT CAR_ID FROM CAR_RENTAL_COMPANY_RENTAL_HISTORY
+                            WHERE START_DATE <= '2022-10-16'
+                             AND END_DATE >= '2022-10-16') THEN '대여중'
+        ELSE '대여 가능'
+    END AS AVAILABILITY
+FROM CAR_RENTAL_COMPANY_RENTAL_HISTORY R
+GROUP BY CAR_ID
+ORDER BY CAR_ID DESC
+```
+
+SELECT CATEGORY,
+PRICE AS MAX_PRICE,
+PRODUCT_NAME
+FROM FOOD_PRODUCT F
+WHERE PRICE = (SELECT MAX(PRICE) FROM FOOD_PRODUCT
+WHERE CATEGORY = F.CATEGORY
+GROUP BY CATEGORY)
+GROUP BY CATEGORY
+
+## **:=** 변수 초기화해서 사용하기
+
+범위 문제를 풀다가 7부터 19까지는 있는데 출력해야할 범위가 0~23인 경우 `GROUP BY`로는 존재하지 않는 값 0~6, 20~23을 출력할 수 없다.
+
+이 경우 사용하는 것이 `SET @hour:=-1`이다. 이는 hour라는 변수에 값을 넣고 for문처럼 사용할 수 있는 것이다.
+
+## 상위 몇개 행 찾기
+
+### ROW_NUMBER(), TOP N번째 찾기
+
+`ROW_NUMBER`라는 함수는 정렬된 리스트에 숫자를 하나씩 부여한다.
+
+```sql:row_number.sql
+SELECT ROW_NUMBER() OVER (ORDER BY (FIRST_HALF.TOTAL_ORDER+JULY.TOTAL_ORDER )DESC) as ranking
+FROM FIRST_HALF
+LEFT JOIN JULY
+ON FIRST_HALF.SHIPMENT_ID = JULY.SHIPMENT_ID
+LIMIT 3 // 몇개의 행만 출력할 것인지 제한
+```
+
+### PERCENT_RANK(), 상위 N 퍼센트 고르기
+
+이것도 마찬가지로 정렬된 리스트에서 상위 몇 퍼센트(0.1이면 10%)의 값들을 출력할 건지 정한다.
+
+```sql:percent.sql
+SELECT * FROM (SELECT total_bill,
+       PERCENT_RANK() OVER (ORDER BY total_bill DESC) as per_rank FROM tips) a
+WHERE a.per_rank <= 0.01 // 비율 선택
+```
+
+## 특정 기간 동안 대여하지 않은 id 중에서 값 구하기
+
+3개 테이블이 등장하는 복잡한 문제다. 이 문제는 특정 기간 동안 대여되지 않는 차의 예상 대여 가격을 구하는 것이다. 재밌는 점은 `JOIN`을 하는 기준인 ON 안에 SELECT를 둬서 원하는 조건을 찾을 수 있다.
+
+```sql:joinAndSelect.sql
+SELECT c.CAR_ID,	c.CAR_TYPE, CONVERT((DAILY_FEE*30*(1 - DISCOUNT_RATE*0.01)), signed integer) AS FEE  FROM CAR_RENTAL_COMPANY_CAR c
+INNER JOIN CAR_RENTAL_COMPANY_DISCOUNT_PLAN p
+    ON c.CAR_TYPE = p.CAR_TYPE
+    AND c.CAR_ID NOT IN
+        (SELECT CAR_ID FROM CAR_RENTAL_COMPANY_RENTAL_HISTORY
+        WHERE START_DATE<='2022-11-30' AND END_DATE >='2022-11-01')
+WHERE DURATION_TYPE='30일 이상'
+HAVING FEE BETWEEN 500000 AND 1999999
+ORDER BY FEE DESC, c.CAR_TYPE ASC, c.CAR_ID DESC;
+```
+
+## 서브 쿼리, SELECT 안에 WHERE 안에 SELECT 안에 WHERE,....
+
+쿼리 안에 쿼리들이 깊게 들어갈 수 있다. 아래는 댓글을 많이 작성한 사람을 찾고 그 사람의 댓글을 출력하는 쿼리.
+아래처럼 서브 쿼리는 꼭 **별칭(ex, rc)** 을 붙여줘야한다.
+
+```sql:subsuery.sql
+SELECT MEMBER_NAME
+   , REVIEW_TEXT, DATE_FORMAT(REVIEW_DATE, '%Y-%m-%d') AS REVIEW_DATE
+FROM MEMBER_PROFILE p
+INNER JOIN REST_REVIEW v
+    ON p.MEMBER_ID= v.MEMBER_ID
+WHERE
+    (SELECT COUNT(REVIEW_ID) as cr FROM REST_REVIEW
+        WHERE p.MEMBER_ID = MEMBER_ID
+        GROUP BY MEMBER_ID) =
+    (SELECT MAX(cr) FROM ( // FROM 옆에 기준되는 쿼리는 별칭이 필요함!!
+        SELECT COUNT(REVIEW_ID) as cr FROM REST_REVIEW
+            GROUP BY MEMBER_ID
+    ) as rc)
+```
