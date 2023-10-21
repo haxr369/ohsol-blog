@@ -6,6 +6,7 @@ import MobileNav from './MobileNav'
 import ThemeSwitch from './ThemeSwitch'
 import SearchButton from './SearchButton'
 import Image from 'next/image'
+import CountPosts from '@/components/customComponents/CountPosts'
 
 const Header = () => {
   return (
@@ -32,6 +33,9 @@ const Header = () => {
         </Link>
       </div>
       <div className="flex items-center leading-5 space-x-4 sm:space-x-6">
+        <div className="hidden sm:block font-medium text-gray-900 dark:text-gray-100">
+          <CountPosts />
+        </div>
         {headerNavLinks
           .filter((link) => link.href !== '/')
           .map((link) => (
