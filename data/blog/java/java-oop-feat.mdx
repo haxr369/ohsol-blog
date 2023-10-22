@@ -1,0 +1,243 @@
+---
+title: 객체지향 프로그래밍 익히기 (1)
+date: 2023-10-22
+lastmod: 2023-10-22
+tags: ['java', 'oop', 'abstration', 'encapsulation', 'inheritance', 'polymorphism']
+draft: false
+summary: '객체지향의 4가지 특징 추상화, 캡슐화, 상속, 그리고 다형성을 이해하고 실습한다.'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 개요
+
+객체지향 프로그래밍은 **프로그램을 수많은 `객체`라는 기본 단위로 나누고 이들의 상호작용으로 서술하는 방식**. 여기서 객체란 하나의 역할을 수행하는 `메소드와 변수(데이터)`의 묶음이다.
+
+Java와 같은 객체지향언어의 목표는 **코드의 재사용성과 유지보수 용이성 그리고 중복된 코드의 제거**라고 할 수 있다.
+다만, 객체지향 프로그래밍은 거시적으로 코드와 코드 사이 관계를 정의하고 사용하기 때문에 목표를 이루기란 쉽지 않다.
+그래서 일단 프로그램을 기능적으로 완성한 다음 어떻게 하면 보다 객체지향적으로 코드를 개선할 수 있을지 고민하는 것이 좋다.
+
+그래서 이번 포스팅은 객체지향의 4가지 요소와 5가지의 설계 원리를 실습해보자.
+
+## 추상화 (Abstration)
+
+추상화란 불필요한 세부 사항들은 제거하고 가장 본질적이고 공통적인 부분만 추출하여 표현하는 것이다. 그럼 프로그래밍에서 추상화를 어떻게 적용시킬 수 있을까?
+**객체지향 프로그래밍에서 추상화는 객체의 공통적인 속성과 기능을 추출하여 정의하는 것**을 의미한다.
+
+<img alt="자동차와 오토바이의 추상화" src="/static/images/java/java-abstrate.png" />
+
+우리가 `탈 것의 구체적인 객체`를 선택할 때, 그 기능(시동, 전진, 후진)들의 세부 구현 방법보다는 그 객체가 **탈 것의 기능을 충분히 수행할 수 있는가?** 를 먼저 생각한다. 위 그림을 보면, 탈 것이라는 범주 안에 자동차와 오토바이가 있다. `탈 것의 기능이 필요할 때` 우리는 자동차나 오토바이를 `선택`할 수 있다.
+그렇듯, 추상화는 객체들(클래스들)의 공통적인 내용이나 특정 범주가 필수적으로 가지고 있어야할 속성이나 메서드를 추출하여 표현하고, 그 범주 안에 있는 클래스는 공통적인 속성을 반드시 가지고 있음을 표현한다.
+
+Java에서 추상화는 추상 클래스와 인터페이스로 구현된다. 특히 인터페이스는 추상 메서드(입력과 출력의 자료형을 정하고 구현하지 않은 메서드)만 존재하는 클래스다.
+추상 클래스와 인터페이스를 구현하는 클래스는 필수적으로 추상 메서드를 구현해야한다.
+
+인터페이스에서 정의한 역할(기능)을 각각의 클래스에 맞게 구현한다. 이는 `역할과 구현의 분리`라고한다. 아래는 인터페이스를 정의하고 구현하는 코드다.
+
+```java:interfaceImplement.java
+interface Vehicle {
+    public abstract void startUp();
+    void moveForward();
+    void moveBackward();
+}
+
+class Car implements Vehicle{
+    @Override
+    public void startUp() {
+        System.out.println("자동차 시동!!");
+    }
+    @Override
+    public void moveForward() {
+        System.out.println("자동차 전진!!");
+    }
+    @Override
+    public void moveBackward() {
+        System.out.println("자동차 후진!!");
+    }
+}
+
+class MotorBike implements Vehicle{
+    @Override
+    public void startUp() {
+        System.out.println("오토바이 시동!!");
+    }
+    @Override
+    public void moveForward() {
+        System.out.println("오토바이 전진!!");
+    }
+    @Override
+    public void moveBackward() {
+        System.out.println("오토바이 후진!!");
+    }
+}
+```
+
+## 캡슐화 (encapsulation)
+
+캡슐화는 변수나 메서드를 하나의 단위로 묶는 것을 의미한다. 보통 클래스를 통해 캡슐화는 구현되고, 인스턴스를 통해 맴버 변수와 메서드에 쉽게 접근할 수 있다.
+
+캡슐화를 통해서 인스턴스의 데이터를 외부로부터 보호하고 데이터 접근은 메서드를 통해서 이뤄진다. 아래는 Car 클래스와 캡슐화의 예시다.
+아래와 같이 클래스를 작성하면 Car 클래스 내부의 속성인 `speed`와 `running`은 Car의 메서드를 통해 값을 얻거나 조작될 수 있다.
+
+```java:encapsulate.java
+public class Main {
+    public static void main(String[] args) {
+        Car car = new Car();
+        car.startUp();
+        car.moveForward();
+        car.moveForward();
+        System.out.println("자동차 속도 : "+ car.getSpeed());
+    }
+}
+
+class Car implements Vehicle{
+    private Long speed;
+    private boolean running;
+    public Car() {
+        this.speed = 0L;
+        this.running = false;
+    }
+    @Override
+    public void startUp() {
+        System.out.println("자동차 시동!!");
+        this.running = true;
+    }
+    @Override
+    public void moveForward() {
+        System.out.println("자동차 전진!!");
+        this.speed++;
+    }
+    @Override
+    public void moveBackward() {
+        System.out.println("자동차 후진!!");
+    }
+    // getter, setter 생략
+}
+```
+
+## 상속 (inheritance)
+
+상속은 기존의 클래스를 재사용하여 새로운 클래스를 작성하는 것이다. 상속을 통해 클래스를 작성하면 코드를 공통적으로 관리할 수 있고,
+필요한 부분만 추가적으로 작성하기 때문에 코드의 추가 및 변경이 매우 용이하다.
+
+조상 클래스와 자손 클래스가 있는데 자손 클래스는 조상 클래스를 상속 받아 조상 클래스의 멤버(변수, 메서드)를 사용할 수 있다. 마치 유산을 상속하는 것과 같다.
+다만, `@Override`라는 어노테이션을 사용하면 멤버 메서드의 구체적인 구현 방법을 변경할 수 있다.
+
+```java:inheritance.java
+public class Main {
+    public static void main(String[] args) {
+        SuperCar superCar = new SuperCar();
+        superCar.startUp();
+        superCar.overBoost();
+        System.out.println("자동차 속도 : "+ superCar.getSpeed());
+    }
+}
+
+
+class SuperCar extends Car {
+    public void overBoost(){
+        this.speed = 1000L;
+    }
+}
+```
+
+### 포함관계, 코드 재사용의 다른 방법.
+
+포함관걔는 여러 작은 클래스를 모아서 하나의 큰 클래스를 구성할 때 사용한다. 마치 자동차를 엔진, 바퀴, 창문 같은 작은 요소들의 조합으로 만들 수 있는 것과 같다.
+포함관계를 구현하는 방법은 한 클래스의 멤버변수로 다른 클래스 타입의 참조변수를 선언하는 것이다.
+
+```java:has-a.java
+class Car(){
+  Wheel w = new Wheel();
+  Engin e = new Engin();
+}
+```
+
+- 상속
+  - Is a 관계
+  - 슈퍼 자동차는 자동차다.
+  - 조상 클래스는 자손 클래스의 `필요조건`이다. 조상 클래스가 없으면 자손 클래스도 없기 때문
+- 포함
+  - Has a 관계
+  - 자동차는 바퀴를 가진다.
+
+## 다형성 (polymorphism)
+
+다형성이란 `여러 가지 형태를 가질 수 있는 능력`을 의미한다. 자바에서는 **한 타입의 참조변수로 여러 타입의 객체를 참조**해서 다형성을 구현했다.
+구체적으로 조상 클래스 타입의 참조변수로 자손클래스의 인스턴스를 참조할 수 있도록 한다.
+
+예를 들어 `poly1.java`처럼 슈퍼 자동차와 자동차 같이 인스턴스 타입과 참조변수 타입이 일치하는 것이 보통의 사용법이다.
+`poly2.java` 같이 조상 클래스 타입의 참조변수로 자손 클래스의 인스턴스를 참조하도록 하는 것도 가능하다. 하지만, 이 경우 자손 클래스의 인스턴스는 `조상 클래스의 멤버만` 사용할 수 있다. 자손 클래스가 따로 작성한 멤버는 사용할 수 없는 것이다.
+
+```java:poly1.java
+public static void main(String[] args) {
+    SuperCar superCar = new SuperCar();
+    Car car = new Car();
+}
+```
+
+```java:poly2.java
+public static void main(String[] args) {
+    Car superCar = new SuperCar();
+    Car car = new Car();
+}
+```
+
+- 조상타입의 참조변수로 자손타입의 인스턴스를 참조할 수 있다.
+- 자손타입의 참조변수로 조상타입의 인스턴스를 참조할 수 없다.
+
+조상 클래스의 참조변수로 자손 클래스의 인스턴스를 참조하도록하는 것을 **참조변수의 형변환**이라고 하고 이는 인스턴스 자체에는 영향을 끼치지 않고, 참조할 수 있는 멤버의 범위(개수)를 조절할 뿐이다.
+
+### 매개변수의 다형성
+
+자손 클래스 인스턴스의 형변환은 자손 클래스 고유의 멤버를 참조하지 못하게 함에도 불구하고 왜 사용할까?
+
+그 이유 중 하나로 매개변수의 다형성이 있다. Car 클래스를 상속한 SuperCar. BumpCar, 그리고 TrashCar가 있을 때, User라는 클래스의 `getSpeed`라는 메서드가 매개변수로 BumpCar 타입을 받는다고 해보자.
+나중에 SuperCar와 TrashCar 자동차도 속도 측정하고 싶은데 매개변수의 타입이 달라서 새로운 메서드를 선언해야하는 문제가 있다.
+
+위와 같은 문제를 해결하기 위해서 getSpeed 매개변수의 타입을 모든 자동차 공통의 타입인 Car로 정하면, 하나의 메서드로 다양한 클래스들을 매개변수로 받을 수 있게된다.
+
+```java:poly3.java
+public class Main {
+    public static void main(String[] args) {
+        SuperCar superCar = new SuperCar();
+        superCar.overBoost();
+        TrashCar trashCar = new TrashCar();
+        trashCar.moveForward();
+        BumpCar bumpCar = new BumpCar();
+        bumpCar.moveBackward();
+
+        User user = new User();
+        user.getSpeed(superCar);
+        user.getSpeed(bumpCar);
+        user.getSpeed(trashCar);
+    }
+}
+
+class SuperCar extends Car {
+    public void overBoost(){
+        this.speed = 1000L;
+    }
+}
+
+class BumpCar extends Car {
+    public void overBoost(){
+        this.speed = 1000L;
+    }
+}
+class TrashCar extends Car {
+    public void overBoost(){
+        this.speed = 1000L;
+    }
+}
+class User {
+  void getSpeed(Car c){
+    System.out.println(c.getSpeed());
+  }
+}
+```
+
+위 코드와 같이 자손 클래스의 인스턴스를 생성할 때 인스턴스 타입과 참조변수 타입을 동일하게 해도, 매개변수는 조상 클래스의 타입이기 때문에 자손 클래스의 인스턴스가 매개변수가 될 수 있다.
+다만, 조상 클래스 타입으로 형변환됐기 때문에 메서드 안에서 자손 클래스 고유의 멤버는 사용하지 못할 것이다.
