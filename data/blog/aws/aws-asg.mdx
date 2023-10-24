@@ -1,8 +1,8 @@
 ---
-title: AWS ASG 정리
+title: AWS ASG 개요와 실습 방법
 date: 2023-10-24
 lastmod: 2023-10-24
-tags: ['AWS', 'ASG', 'DVA-C02']
+tags: ['AWS', 'ASG', 'launch-template', 'elb', 'DVA-C02']
 draft: false
 summary: 'AWS Auto Scaling Group 내용 정리'
 ---
@@ -84,3 +84,13 @@ EC2 대신 바로 실행 가능한 AMI를 이용하는 것이 인스턴스 생�
 4. 실행중인 인스턴스에 접속해서 CPU 사용량 100%되도록 스트레스 발생
 5. 모니터링 탭에 CPU 사용량이 늘어난 것을 확인하고 인스턴스가 새롭게 생되는 것을 확인
 6. 스트레스를 끄고 스케일링하는 것을 확인
+
+## ASG instance refresh
+
+인스턴스 리프레시의 목표는 launch template을 업데이트하고 ASG의 모든 인스턴스를 재생성하는 것이다.
+인스턴스를 종료한 다음 다시 나타날 때까지 기다리는 대신 ASG의 instance refresh를 사용할 수 있다.
+
+launch template에 새로운 AMI로 인스턴스 정보를 업데이트했고 새로운 AMI를 생성할 때 기존 template으로 만든 인스턴스를 전부 제거하는 것이 아니라 미리 설정한 Healthy Percentage 내로 조금씩 인스턴스를 제거하고 새로운 인스턴스를 생성한다.
+이렇게 조금 제거하고, 새롭게 만들고를 반복해서 Healthy Percentage를 보장하면서 모든 인스턴스를 업데이트할 수 있다.
+
+다만, 인스턴스를 생성하자마자 트래픽을 처리할 수 없기 때문에 warm-up time(인스턴스 사용 대기 시간)이 필요하다
