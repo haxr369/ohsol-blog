@@ -1,0 +1,129 @@
+---
+title: AWS ElastiCache 정리와 구현 전략
+date: 2023-10-26
+lastmod: 2023-10-27
+tags: ['AWS', 'cache', 'ElastiCache', 'redis', 'Memcached', 'MemoryDB', 'DVA-C02']
+draft: false
+summary: 'AWS ElastiCache의 개요, Redis와 Memcached의 비교 그리고 ElastiCache 구현 전략을 정리한다.'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+##ElastiCache 개요
+
+RDS가 RDB를 관리하는 서비스라면, ElastiCache는 캐시 기술인 관리형 redis나 Memcached를 얻을 수 있도록한다.
+캐시는 높은 성능과 짧은 대기 시간을 가진 인 메모리 DB, 읽기 집약적인 DB의 부하를 줄일 수 있다. (쿼리 자체가 저장되기 때문에 DB에 매번 쿼리를 날리지 않음, 쿼리 결과를 검색하는데 사용할 수 있다.)
+
+- 애플리케이션의 stateless를 도와준다.
+- RDS와 마찬가지로 관리형 서비스기 때문에 AWS가 OS 관리, 패칭, 최적화, 설정 구성, 모니터링, 장애 복구, 그리고 백업 같은 서비스를 제공한다.
+- RDS처럼 단순히 ElastiCache를 활성화해서 얻을 수 있지 않고, 많은 애플리케이션 코드 변경이 필요하다. (DB에 쿼리하기 전에 ElastiCache에 캐시를 쿼리해야한다.)
+
+## ElastiCache 캐시 과정
+
+### DB Cache
+
+- app이 쿼리를 ElastiCache에 날리서 캐시된 것이 있는지 확인.
+  - 있으면 Cache hit : 바로 응답
+  - 없으면 Cache miss : DB에 읽기 수행, ElastiCache에 결과 캐싱 (다음 app이 동일한 쿼리를 날리면 Cache hit하게된다.)
+- 최신 데이터만 사용할 수 있도록 캐시 무효화 전략이 있어야한다 (ex, 만료시간)
+
+### User Session Store
+
+- 유저가 app 인스턴스에 로그인하면 app이 인증 세션을 ElastiCache에 저장 **Write session**
+- 동일한 app의 다른 인스턴스에 접근하면 ElastiCache에서 이전에 저장한 유저 세션을 불러온다. **Retrieve session**
+- ElastiCache를 사용해서 DB 없이 유저의 인증 정보를 저장할 수 있고 stateless application을 만들 수 있다.
+
+## Redis vs Memcached
+
+Redis는 고가용성과 백업 기능을 가지고 Memcached는 단순 분산 캐시를 지원한다.
+
+특히 Redis는 RDS와 같이 읽기 전용 복제본을 가지고 확장성과 가용성을 얻을 수 있다.
+복제본을 2개 이상가지고 있으면 당연히 Multi-AZ가 되고 가용성을 높일 수 있다. 다만, 복제복이 없으면 Multi-AZ를 쓸 수 없다.
+
+### Redis
+
+다중 AZ는 고가용성을 얻을 수 있다.
+
+1. Multi-AZ with Auto-Failover - 고가용성 RDS와 비슷
+2. 읽기 전용 복제본으로 읽기 스케일링
+3. **AOF 지속성을 이용한 데이터 내구성**
+4. 백업과 복원 기능
+5. **Sets와 정렬 Sets 지원**
+
+결국 Rddis에서 가장 중요한 것은 데이터 내구성과 캐싱 기능이다.
+
+### Memcached
+
+1. 데이터 파티셔닝에 Multi-node (sharding)
+2. 복제본이 없기 때문에 낮은 가용성
+3. 지속적 캐싱 없음
+4. 백업과 복없 없음
+5. Multi-thread 아키텍처
+
+Memcached는 샤딩을 통해 여러 인스턴스에 데이터를 저장해놓는다. 결국 분산된 순수 캐시이므로 데이터 손실을 감당해야한다.
+
+## ElastiCache 전략과 고려사항
+
+캐시는 기본적으로 메모리 기반 DB기 때문에 매번 캐시 메모리가 꽉찬다면 스케일 up or out 전략을 사용할 수 있다.
+보통 redis 같이 메모리 기반 DB는 스케일 up 전략을 사용한다.
+
+캐시가 꽉차서 사용하지 않는 캐시를 지우게되는 경우를 **캐시 제거**라고 한다.
+
+1. 캐시 데이터가 안전한가?
+   - 데이터를 캐싱해도 괜찮을 때만 캐싱
+   - 캐싱한 데이터는 최신 데이터가 되도록 일관성을 유지해야한다.
+2. 데이터 캐싱이 효율적인기?
+   - 데이터가 천천히 변하고 자주 필요한 키가 적을 경웨 효율적
+   - 데이터가 빠르게 변하고 데이터셋의 모든 키가 필요한 경우 비효율적
+3. 데이터 구조가 캐싱에 적합한가?
+   - kay-value 형태, 집계 결과 같은 형태는 캐싱하기 좋다.
+   - 항상 DB 읽기 전에 캐싱된 데이터를 확인할 수 있어야한다.
+4. **아떤 캐싱 설계 패턴이 가장 적합한가?**
+   - Lazy Loading, Cache-Aside, Lazy Population
+   - Write Through - Add or Update cache when database is updated
+   - Cache Evictions and Time-to-Live
+
+### Lazy Loading, Cache-Aside, Lazy Population
+
+1. 한번 요청된 데이터만 캐싱
+2. Node failure(cache miss)는 치명적이지 않음, 단지 다시 캐싱하는데 시간이 조금 걸릴 뿐이다.
+3. Cache miss가 발생하면 application은 3회의 네트워크 trip이 발생한다.
+4. 캐시에 오래된 데이터가 남아있는 경우 괜찮은지 지우고 cache miss 판정을 내려야하는지 결정해야한다.
+
+Lazy Loading 캐싱 패턴은 Next.js의 api call 캐시 전략과 동일한 전략을 가진다.
+다만 다른 점은 상태가 없기 때문에 cache miss가 발생하면 application은 3번의 네트워크 trip이 발생한다.
+
+### Write Through - Add or Update cache when database is updated
+
+Lazy Loading과 비교하면 Lazy Loading은 Cache miss일 때 읽기 패널티가 발생하고, Write Through는 매번 쓰기 패널티가 발생한다.
+
+**쓰기 할 때마다 2회 네트워크 trip하게된다.**
+
+1. 캐시 안에 테이터는 항상 최신 상태
+2. 그래서 읽기는 항상 빠르다.
+3. 매번 쓰기할 때마다 2회의 네트워크 trip이 발생한다. 읽기보다 쓰기가 더 시간이 오래걸림 (게시글 올릴 때는 1~2초, 프로파일 읽는데는 1초 미만)
+4. RDS에 데이터가 기록되기 전에 ElastiCache가 필요한 데이터를 갖지 못하는 문제가 있다.
+   - ElastiCache에 계속 읽기 요청을 하지만, DB에 쓴 경험이 없어서 계속 Cache miss가 발생하는 문제
+   - 위 상황이 계속되면 캐시가 의미가 없어지기 때문에 Lazy Loading의 Cache miss 전략을 합칠 수 있다.
+5. RDS에 데이터가 많아도 전부 캐싱되기 때문에 캐시 크기가 작은 경우 문제될 수 있다.
+
+### Cache Evictions and Time-to-Live
+
+캐시는 크기가 제한되어있기 때문에 캐시 데이터를 제거하기 위한 3가지 방법이 있다.
+
+1. 명시적으로 캐싱된 데이터 지우기
+2. 캐시 메모리가 꽉 찼을 때 가장 최근에 사용되지 않은 항목(LRU, 최근 최소 사용) 제거
+3. Time-to-Live 설정으로 항목이 캐싱되는 기간을 설정함
+
+TTL은 리더보드, 댓글, 활동 스트림 같은 곳에 쓰기 좋고, 몇 초 또는 몇 일까지 설정할 수 있다. 몇 초 동안 저장되는 캐시도 매우 자주 요청되는 데이터라면 효과적이다.
+
+## Amazon MemoryDB for Redis
+
+Multi-AZ 트랜젝션 log를 가지고, Redis와 호환되고 내구성이 뛰어난 인 메모리 DB 서비스.
+Redis와 차이점은 초당 1억 6천만 건의 요청을 수행 할 수 있는 고성능 REST API를 서비스한다.
+10GB부터 100TB 이상까지 원활하게 크기를 조정할 수 있다.
+
+많은 웹 서비스에 사용될 수 있는데, 많은 마이크로 서비스가 있을 때 Redis와 호환되는 인 메모리 DB에 액세스해야한다.
+이 경우 초고속 REST API를 서비스할 수 있는 MemoryDB가 적절하다. MemoryDB를 사용하면 수백개의 초고속 노드에 걸쳐 인메모리에 데이터를 저장할 수 있고, Multi-AZ에 데이터를 저장해서 안정성과 빠른 회복을 얻릉 수 있다.

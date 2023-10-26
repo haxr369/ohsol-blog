@@ -1,0 +1,49 @@
+---
+title: AWS Route 53 정리
+date: 2023-10-27
+lastmod: 2023-10-27
+tags: ['AWS', 'dns', 'route-53', 'DVA-C02']
+draft: false
+summary: 'AWS의 DNS 서비스인 Route 53에 대해 정리한다.'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+이번 포스팅을 보기 앞서 미리 작성한 [DNS](/blog/network/dns)와 [AWS HTTPS 연결 설정](/blog/aws/aws-https)를 보는 것을 추천한다.
+DNS, https 개념과 AWS Route 53에서 도메인을 사서 HTTPS 연결하는 과정을 볼 수 있다.
+
+## Route 53 개요
+
+DNS에 대한 완전한 제어를 할 수 있다.
+클라이언트다 public ip의 EC2 인스턴스에 접근할 때 Route53에 도메인 이름에 맞는 IP 주소를 물어봐서 EC2에 접속할 수 있다.
+Route 53은 로드밸런서처럼 자원의 health 체크할 수 있다.
+
+### Route 53 - 레코드
+
+각 레코드에는 아래 내용이 포함된다.
+
+1. 도메인,서브 도메인 이름 (ex, example.com)
+2. 레코드 타빙 (ex A, AAAA, CNAME, NS)
+3. value (ex 123.455.754.113)
+4. 라우팅 정책 : Route 53이 쿼리에 응답하는 방식
+
+- A : IPv4 IP와 호스트 이름을 단순 맵핑
+- AAAA : IPv6 IP와 호스트 이름을 단수 맵핑
+- CNAME : 호스트 이름을 다른 호스트 이름에 맵핑, 대상 호스트 이름은 A,AAAA 레코드이고, top node에는 CNAME을 쓸 수 없다. 예를 들어 example.com에 대한 CNAME은 생성할 수 없지만, www.example.com은 생성할 수 있다.
+- NS : 호스팅 존의 이름 서버. 도메인에 트래픽이 어떻게 라우팅되어야하는지 제어한다.
+
+## Hosted Zones
+
+Hosted Zone은 도메인과 서브 도메인으로 가능 트래픽의 라우팅 방식을 정의한다.
+
+- Public Hosted Zone
+  - public 도메인을 구매했다면 public hosted zone을 만들 수 있다.
+  - Public hosted zone의 도메인은 쿼리로 IP 주소를 얻을 수 있다.
+- Private Hosted Zone
+  - 공개되지 않는 도메인 이름 지원
+  - VPC 내부에서만 URL을 해석할 수 있다.
+  - 비공개 URL이기 때문에 회사 내부에서만 사용할 수 있다.
+
+Route 53에서 제공하는 모든 hosted zone은 매달 0.5$씩 지불해야한다.

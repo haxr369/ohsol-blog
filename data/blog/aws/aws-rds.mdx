@@ -1,7 +1,7 @@
 ---
 title: AWS RDS, Aurora 가용성을 위한 설정
 date: 2023-10-24
-lastmod: 2023-10-25
+lastmod: 2023-10-26
 tags: ['AWS', 'RDS', 'DB', 'Aurora', 'DVA-C02']
 draft: false
 summary: 'AWS RDS와 Aurora. 가용성을 위한 여러 설정들'
@@ -81,3 +81,48 @@ Aurora에는 하나의 마스터 DB가 있고 최대 15개의 읽기 전용 복�
 또 다른 Aurora의 기능으로 **Back track**이라는 기능이 있다. 백업하는 것과는 다른 방법으로 DB의 과거 기록을 저장해두고 언제든지 이전 포인트로 데이터를 복원할 수 있다. (cmd z 같은 느낌!) 이 기능은 다른 RDS에는 없는 기능이라 외워둘 필요가 있을 것이다.
 
 이처럼 Aurora는 다른 RDS에 비해 20% 가격이 비싸지만 클라우드 스토리지를 적극적으로 이용해서 가용성과 Scaling 가능성을 극대화한 RDS라고 할 수 있다.
+
+## RDS와 Aurora의 보안
+
+- KMS를 이용해서 마스터와 복제본 DB 볼륨 내용 암호화, 시작할 때 설정해야한다.
+  - 마스터가 암호화가 안되면 복사본도 암호화가 안된다.
+  - 이미 실행 중인 DB를 암호화하려면 스냅샷을 찍고, 다시 복구하는 과정에서 암호화 설정을 추가하면된다.
+- AWS TLS 루트 인증서를 이용해서 TLS 보안 연결 가능하다.
+  - HTTPS 연결 같이 네트워크 상에서 데이터 암호화 가능!
+  - 비대칭 키를 이용한 연결!
+- DB 로그인할 때 username/pwd 대신에 IAM role을 이용할 수 있다.
+  - 예를 들어 EC2에 IAM 역할을 부여해서 DB 접근을 설정할 수 있다.
+- Security Group을 이용해서 DB의 네트워크 연결을 관리할 수 있다.
+- 관리형 서비스기 때문에 SSH 연결을 불가능한다.
+- 감사 로그를 찍을 때 Audit Log를 이용할 수 있다.
+  - Auit Log는 짧은 기간 동안 저장되기 때문에 더 길게 저장하고 싶으면 Cloud Watch Log를 사용할 수 있다.
+
+## RDS Proxy
+
+DB Proxy는 DB를 연결하기 전에 거쳐가는 곳이다. 그럼 왜 DB Proxy가 필요할까?
+
+### connection pooling
+
+마치 JDBC의 Data Source와 비슷한 역할을 RDS Proxy가 해줄 수 있다.
+
+Data Source는 이미 connection pool을 만들어 놓고 외부 연결이 요청되면 남는
+connection을 제공해주면서 DB에 connection 생성으로 인한 리소스를 줄일 수 있다.
+비슷하게 RDS Proxy는 VPC 내부에 RDS와 함께 위치하면서 RDS의 connection을 미리 생성해서 저장하는 connection pool 역할을 할 수 있다.
+
+위오 같은 특징 덕분에 JDBC의 connection pool의 장점을 그대로 RDS Proxy가 가질 수 있다.
+connection을 만들기 위한 시간을 줄일 수 있어 timeout 시간을 줄이고, DB의 리소스를 아낄 수 있다.
+
+이러한 특징을 가지고 Lambda와 더 큰 시너지를 얻을 수 있다. Lambda는 한번에 100~1000개가 생성되고 제거되는데 그때마다 DB connection을 생성하면
+DB의 메모리나 CPU가 버티지 못할 수 있다. 그렇기 때문에 connection pooling하는 RDS Proxy를 사용해서 더 적은 연결 시간, 더 적은 리소스로 Lambda와 RDS를 연결할 수 있다.
+
+### Multi-AZ 장애조치
+
+RDS Proxy는 Multi-AZ를 지원하기 때문에 RDS나 Aurora의 장애조치를 지원할 수 있는데.
+프라이머리 DB에서 대기 인스턴스로 이동하는 시간을 66% 감소할 수 있고, 자동화 할 수 있다고 한다.
+
+### 보안 연결
+
+RDS Proxy 덕분에 사용자가 RDS에 연결할 때 IAM 인증을 받아야만 RDS에 연결할 수 있도록 설정할 수 있다.
+그리고 AWS Secrets Manager에 이런 자격증명을 저장한다.
+
+RDS Proxy는 VPC 내부에 위치하고 인터넷으로 RDS Proxy를 연결할 수 없다. VPC 내부 인스턴스만 연결할 수 있다. Lambda나 EC2!

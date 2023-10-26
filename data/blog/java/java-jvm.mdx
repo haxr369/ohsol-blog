@@ -1,0 +1,74 @@
+---
+title: JVM 구성과 동작원리, JAR와 WAR
+date: 2023-10-26
+lastmod: 2023-10-26
+tags: ['java', 'jvm', 'jre', 'jdk', 'spring', 'jar-war']
+draft: false
+summary: 'JAVA 코드를 실행시키는 과정과 실행 파일인 JAR, WAR를 이해하기 '
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## JDK, JRE, 그리고 JVM 차이
+
+JVM은 자바 바이트 코드를 실행시키는 Java Virtual Machine(JVM)이다. 그래서 단순히 JVM 단독으로는 Java 코드를 **컴파일**할 수 없다.
+JRE는 컴파일된 클래스 파일과 라이브러리가 포함된 Java Runtime Environment(JRE)이다.
+JRE는 **.class** 파일의 모음이고 이를 실행만 할 수 때문에 JVM과 마찬가지로 Java 코드를 **컴파일**할 수 없지만, jar 파일을 실행할 수 있다. (java -jar sol-was.jar)
+JDK는 .java 파일을 bytecode 파일로 컴파일하는 **javac**가 있어서 JDK로는 java 파일을 컴파일 할 수 있다. JVM은 javac가 컴파일한 바이트코드를 바탕으로 프로그램을 실행시킨다.
+
+## JAR과 WAR의 차이
+
+JAR 파일은 웹 애플리케이션 서버의 도움 없이 스스로 웹 애플리케이션을 실행시킬 수 있고 가벼운 파일이다. 하지만, 한 애플리케이션 서버에서 여러 애플리케이션을 실행시키려면 WAR로 실행시켜야한다.
+WAR 파일은 웹 애플리케이션을 패키징하고 배포하는데 사용되는 JAR 파일의 한 종류로 볼 수 있다. 그래서 WAR에는 웹 애플리케이션 자원(JSP, servlets, ...)이 포함되어있다.
+
+정리하면 JAR 파일은 독립적인 Java 애플리케이션이나 라이브러리를 패키징하고 배포하는데 사용되고, java 프로그램으로 실행시킬 수 있다.
+WAR 파일은 웹 애플리케이션을 실행시키기 위한 여러 컴포넌트가 들어있고, 이를 실행시키려면 웹 서버가 따로 있어야한다. JAR과 달리 혼자서 실행될 수 없다.
+
+## JVM 구성
+
+JVM은 크게 **Class Loader**, **Runtime Data Area**(JVM 메모리), **Execution Engine**(JVM 엔진)으로 구성됐다.
+
+### Class Loader 적재자
+
+javac로 컴파일 완료된 Bytecode(.class)는 Class Loader로 전달된다.
+Class Loader는 **필요한** 클래스의 Bytecode만 Runtime Data Area로 적재한다. 이를 동적 로딩(Dynamic Loading)이라 한다.
+
+### Runtime Data Area 적재된 곳
+
+JVM은 JavaScript의 V8 엔진과 비슷하게 힙과 스택을 가지고 있다.
+Runtime Data Area는 JVM 메모리로 Class Loader가 필요한 클래스의 Bytecode를 적재한 곳이다.
+
+- 공유 영역
+  - Heap : Garbage Collection의 대상
+  - Method : 전역변수, static 변수 등 (프로그램이 끝날 때까지 생존)
+- Thread 영역
+  - Stack : 지역변수, 파라미터, 리턴값 등이 저장
+  - PC Register : thread 고유 주소 및 명령 저장
+  - Native Method Stack
+
+### Execution Engine 적재된 Bytecode 실행
+
+JVM 엔진은 Runtime Data Area에 적재된 Bytecode를 실행하거나 컴파일하여 저장해놓거나 Garbage Collection을 수행한다.
+
+1. 인터프리터 : Bytecode를 즉시 읽어들여 동작하는 방식
+2. JIT 컴파일러 : 실행이 잦은 Bytecode -> 기계어로 미리 컴파일해놓는 것
+3. Garbage Collection : 힙 메모리가 터지지 않도록 적재된 데이터를 정리
+
+## Runtime Data Area의 힙 영역 구성
+
+- **Young/New Generation**
+  - Minor GC 대상, 짧은 주기로 GC 수행
+  - 실행시킬 때 -Xmm 옵션을 통해 Minor GC의 청소 주기를 정함
+  - Eden, Survivor 1 (S1), Survivor 2 (S2) 영역으로 나뉨
+  - Eden부터 S2까지 자주 쓰이는 것만 살아남아서 이동하게된다.
+- Old/Tenured Generation
+  - Major GC 대상, Minor GC 보다 긴 주기로 GC 수행
+  - Old 영역 존재
+  - 실행시킬 때 -Xms, -Xmx 옵션을 통해 Major GC의 청소 주기를 정함
+- Permanent Generation
+  - Class, Method 등의 코드가 저장되는 영역
+
+객체가 한번 생성되고 계속 힙 메모리에 남아있다면 Old Generation 부분이 꽉차서 메모리 초과 문제가 발생할 수 있다.
+그래서 엔터프라이즈 단위 프로그램은 GC 튜님도 하지만 객체 생성과 제거를 꼭 신경쓴다고 한다.
