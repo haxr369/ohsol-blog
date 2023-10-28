@@ -1,0 +1,122 @@
+---
+title: JAVA 함수형 인터페이스 그리고 Lambda
+date: 2023-10-27
+lastmod: 2023-10-27
+tags: ['java', 'functional-interface', 'lambda', 'first-class-function']
+draft: false
+summary: 'JAVA에서 일급 함수를 '
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 개요
+
+함수형 프로그래밍이란 순수 함수를 기반으로 데이터 처리와 상태 변화를 최소화하는 방식의 프로그래밍 기법. 순수함수란 동일한 입력에 대해 항상 같은 결과를 반환하고 외부 상태를 변경하지 않는 함수를 말한다.
+순수함수를 사용하면 side effect를 최소화하고 유지보수와 테스트를 용이하게 할 수 있다.
+
+JAVA는 JDK1.5부터 추가된 Generics와 JDK1.8부터 추가된 Lambda로 두번의 큰 변화가 생겼다. 이 중 Lambda는 Java를 객체지향 언어인 동시에 함수지향 언어로 바꿔놨다.
+어떻게 Java가 Lambda를 도입했는지 알아보자.
+
+## 함수형 인터페이스 (Functional Interface)와 람다식
+
+Java에서 모든 메서드는 클래스 내에 포함되어야하는다. 함수형 인터페이스에는 오직 하나의 추상 메서드만 정의되어 있어야한다.
+Java는 함수형 인터페이스를 통해 익명 객체를 만들 수 있고 여기의 메서드인 익명 메서드를 사용할 수 있다.
+이렇게 되면 클래스를 정의하지 않고 익명 함수를 사용할 수 있다.
+
+```java:functionalInterface.java
+@FunctionalInterface // 이 어노테이션을 붙이면 컴파일러가 함수형 인터페이스인지 체크해준다.
+interface MyFunction {
+  public abstract in max(int a, int b);
+}
+
+Myfunction f = new MyFunction(){
+    public int max(int a, int b){
+      return a > b ? a : b;
+    }
+  };
+int big = f.max(5,3); // 익명 객체의 매서드를 호출
+```
+
+위 코드에서 f는 익명 클래스의 익명 객체를 생서한 것이고 max는 함수형 인터페이스의 메서드를 구현한 것이다.
+함수형 인터페이스를 구현한 익명 객체를 람다식으로 대체할 수 있다.
+
+```java
+MyFunction f = (int a, int b) -> a > b ? a : b; // 익명 객체를 람다식으로 대체
+int big = f.max(5,3); // 익명 객체의 매서드를 호출
+```
+
+결국 Java에서 익명함수를 Lambda식으로 대체가능한 이유는
+Lambda식은 익명 객체고, 함수형 인터페이스를 구현한 익명 객체의 메서와 람다식의 매개변수의 타입과 개수 그리고 반환값이 일치하기 때문이다.
+기존에는 아래와 같이 인터페이스의 메서드 하나를 구현하는데도 복잡하게 해야했는데 람다식으로 간단히 처리할 수 있게 되었다.
+
+```java
+List<String> list = Arrays.asList("abc","dsf","gds","erg");
+
+// 기존 방식의 인터페이스 메서드 구현
+Collection.sort(list, new Comparator<String>(){ // new Comparator ~~ 부터 익명 객체
+  public int compare (String s1, String s2){
+    return s2.compareTo(s1);
+  }
+})
+// 익명 객체를 람다식으로 대체
+Collection.sort(list, (s1, s2) -> s2.compareTo(s1));
+```
+
+## function 패키지 - 자주 쓰이는 함수형 인터페이스의 형식
+
+아래 그림은 함수형 인터페이스에서 매개변수가 하나인 인터페이스를 정리한 것이다. 타입문자 T는 입력 변수의 타입이고, R은 출력 변수의 타입이다.
+
+<img alt="함수형 인터페이스의 4가지 유형 1" src="/static/images/java/java-functional-4type.png" />
+
+아래 그림은 매개변수가 두개인 인터페이스를 정리한 것이다.
+
+<img alt="함수형 인터페이스의 4가지 유형 2" src="/static/images/java/java-functional-4type2.png" />
+
+### 익명 객체를 인자로 사용하는 방법
+
+```java
+public static void main(String[] args){
+  IntSupplier s = () -> (int)(Math.random()*100)+1; // 입력 없이 출력
+  IntConsumer c = i -> System.out.print(i+" ");     // 입력 받아 출력 X
+  IntPredicate p = i -> i%2==0;                     // 입력 받아 출력 boolean
+  IntUnaryOperator op = i -> i/10*10;               // 입력과 출력의 타입이 동일
+
+  int[] arr = new int[10];
+  makeRandomList(s, arr);
+}
+// 일급함수를 인자로 받아쓰기
+static void makeRandomList(IntSupplier s, int[] arr){
+  for(int i=0; i<arr.length; i++){
+    arr[i] = s.getAsInt();
+  }
+}
+```
+
+## 메서드 참조
+
+람다식이 하나의 메서드만 호출하는 경우 `메서드 참조 (method reference)`라는 방법으로 람다식을 간략히 할 수 있다.
+예를 들어 문자열을 정수로 변환하는 람다식은 아래와 같이 작성한다.
+
+```java:String2Int.java
+// Function은 입력과 출력이 존재하는 함수형 인터페이스, f는 익명 클래스의 객체
+Function<String, Integer> f = (String s) -> Integer.parseInt(s);
+```
+
+위 람다식에서 생략할 수 있는 부분이 어디 있을까?
+컴파일러는 Function의 입력 타입 String을 알고 있으므로 입력이 스트링으로 올 것을 충분히 예상할 수 있다. 그러므로 앞에 `(String s)`를 생략해서 아래와 같이 작성할 수 있다.
+
+```java:String2IntShort.java
+// Function은 입력과 출력이 존재하는 함수형 인터페이스, f는 익명 클래스의 객체
+Function<String, Integer> f = Integer::parseInt;
+// 입력 인자가 2개인 경우도 생략 가능
+BiFunction<String, String, Boolean> f = (s1, s2) -> s1.equals(s2);
+// String 클래스의 equals 메서드를 사용
+BiFunction<String, String, Boolean> f = String::equals;
+```
+
+위처럼 간소화할 수 있는 이유는 람다식이 하나의 메서드만 호출하기 때문에 `Integer` 클래스의 `parseInt` 메서드를 사용하며 입력으로는 `String`이 올 것을 예상할 수 있다.
+메서드 참조를 3가지 경우로 정리하면 다음과 같다.
+
+<img alt="3가지 메서드 참조 방법" src="/static/images/java/java-method-ref.png" />

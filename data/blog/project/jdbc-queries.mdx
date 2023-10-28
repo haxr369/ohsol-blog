@@ -1,0 +1,181 @@
+---
+title: 복잡한 조건 검색 API
+date: 2023-10-28
+tags: ['mysql', 'jdbc', 'Spring', 'java']
+draft: false
+summary: '여기어때 프로젝트의 복잡한 조건 검색을 위해 SQL 쿼리문 작성하고 API 만들기'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 개요
+
+여기어때 프로젝트의 [API](https://periodic-fisher-f68.notion.site/API-API-V2-162c8ff7ae3b4767bcb635f82d055acf?pvs=4)를
+작성하던 중 복잡한 조건 검색을 위해선 더욱 복잡한 SQL 쿼리가 필요했다. 여러 테이블을 JOIN하고 서브 쿼리를 사용하는 등 지금까지 학습한 SQL 기법을 사용했고,
+[3계층 레이어 아키텍쳐](/blog/spring/spring-mvc-3-layered#3계층-아키텍쳐-패턴)은 아래와 같이 역할을 분리했다.
+
+1. Repository : JdbcTemplate을 이용해서 MySQL에 쿼리 요청, RowMappers을 이용한 객체 맵핑
+2. Service : 클라이언트의 요청을 검사하고 비어있는 값이 있다면 기본 값으로 대체
+3. Controller : 클라이언트의 요청을 받고 DTO에 값을 맵핑
+
+## 조건 검색 V2
+
+기존에 조건 검색은 단순히 숙소의 type으로만 조건을 걸었는데 이번에는 숙소 타입, 숙소 키워드 등등 관련된 테이블만 3개라서 전보다 `도전적`이다.
+필요한 조건은 아래와 같다.
+
+1. 숙소 타입과 맞는 숙소 찾기
+1. 조건 키워드들이 전부 포함된 숙소 찾기
+1. 최저 최고 가격 이내인 숙소 찾기
+1. 예약 가능한 숙소 찾기
+
+```sql:keyword.sql
+SELECT a.*
+FROM accommodation a
+LEFT JOIN accommodation_keyword ak
+    ON a.accommodation_id = ak.accommodation_id
+WHERE keyword_id IN (13) AND a.type=3
+GROUP BY a.accommodation_id
+HAVING COUNT(DISTINCT keyword_id) >= 1 AND
+a.price BETWEEN 10000 AND 100000 AND
+a.accommodation_id NOT IN (
+    SELECT accommodation_id FROM reserve
+    WHERE NOT ((DATE_FORMAT(reserve_date, '%Y-%m-%d') >= '2023-10-10') AND
+        (DATE_FORMAT(end_date, '%Y-%m-%d') <= '2023-10-06'))
+);
+```
+
+위와 같이 작성하면 4가지 조건을 모두 충족하는 데이터를 요청하는 쿼리를 요청할 수 잇다.
+JdbcTemplate에서 위 쿼리를 사용하려면 실제 들어가는 `3`,`2023-10-10` 같이 클라이언트 요청에 의해 바뀔 수 있는 것을 고려해서 수정해야한다.
+
+## Repository
+
+```java:ProductDao.java
+
+@Repository
+@RequiredArgsConstructor // jdbcTemplate 의존성 추가
+public class ProductDao {
+    private final JdbcTemplate jdbcTemplate;
+    private final RowMappers rowMappers;
+
+    private String createParameterPlaceholders(List<Long> keywords) {
+        StringBuilder placeholders = new StringBuilder();
+        for (int i = 0; i < keywords.size(); i++) {
+            placeholders.append("?");
+            if (i < keywords.size() - 1) {
+                placeholders.append(",");
+            }
+        }
+        return placeholders.toString();
+    }
+
+    public List<Accommodation> checkProduct(int type, SearchReqDto searchReqDto) {
+        String BaseQuery ="SELECT a.* FROM accommodation a " +
+                "LEFT JOIN accommodation_keyword ak ON a.accommodation_id = ak.accommodation_id "+
+                "WHERE a.type=?";
+        if(!searchReqDto.getKeywords().isEmpty()){
+            BaseQuery +=
+                    "AND keyword_id IN (" + createParameterPlaceholders(searchReqDto.getKeywords()) + ") ";
+        }
+        BaseQuery += "GROUP BY a.accommodation_id " +
+                "HAVING COUNT(DISTINCT keyword_id) >= " + searchReqDto.getKeywords().size() + " AND " +
+                "a.price BETWEEN ? AND ? AND " +
+                "a.accommodation_id NOT IN ( " +
+                "    SELECT accommodation_id FROM reserve " +
+                "    WHERE NOT ((DATE_FORMAT(reserve_date, '%Y-%m-%d') >= ?) AND " +
+                "        (DATE_FORMAT(end_date, '%Y-%m-%d') <= ?))";
+        try{
+            Object[] ProductSearchObj = new Object[]{
+                    type,
+                    searchReqDto.getMin_price(),
+                    searchReqDto.getMax_price(),
+                    searchReqDto.getSel_date2(),
+                    searchReqDto.getSel_date()
+            };
+            return jdbcTemplate.query(BaseQuery, rowMappers.accommodationRowMapper(), ProductSearchObj);
+        }
+        catch (RuntimeException e){
+            throw new BaseException(BaseResponseStatus.DATABASE_ERROR);
+        }
+    }
+}
+
+```
+
+만약 클라이언트가 키워드를 설정하지 않고 요청했을 경우 키워드를 통한 `WHERE절`을 사용하면 안되기 때문에 중간에 if문으로 쿼리를 제어할 수 있었다.
+쿼리가 복잡하고 필요한 변수가 많기 때문에 Object 리스트에 쿼리에 들어갈 변수를 **순서대로** 작성했다.
+
+## Service
+
+분명 클라이언트는 적절하게 요청을 주지 못할 수 있다. 그리고 쿼리에 필요한 객체인 SearchReqDto에 null 값이 있는 요청을 할 수 있다.
+이 경우 기본 값을 넣을 수 있는 부분은 넣어주고 그렇지 않다면 예외처리를 해줘야한다.
+
+- 기본 값이 가능한 조건
+  - 날짜
+  - 예약 가격
+- 기본 값이 불가능한 조건
+  - 키워드
+  - 숙소 타입
+
+`날짜` 조건은 프론트와 상의해서 당일부터 1박2일을 기본 값으로 했다. 예를 들어 '2023년 10월 28일'에 검색하면 '2023년 10월 28일'부터 '2023년 10월 29일'까지 예약할 수 있는 숙소를 검색하는 방식이다. 또한 `예약 가격`은 DTO 선언에서 기본 값을 입력해서 0원부터 INT 최대값까지 범위를 잡아서 모든 가격대의 숙소를 검색할 수 있게했다.
+
+기본 값이 불가능한 `숙소 타입`은 반드시 클라이언트가 보내줘야하고 그렇지 않으면 예외를 발생시키도록 했다. `키워드` 조건은 리스트 형태로 받아야하는데 만약 없더라도 쿼리 작성 과정에서 처리하는 것이 편리해서 [Repository](#repository)에게 예외처리를 위임했다.
+
+```java:Service.java
+@Service
+@RequiredArgsConstructor
+public class ProductService {
+
+    private final ProductDao productDao;
+    private static final String DATE_FORMAT_REGEX = "\\d{4}-\\d{2}-\\d{2}";
+
+    public static boolean isDateFormatValid(String date) {
+        // Use a regular expression to check if the date matches the format "YYYY-MM-DD"
+        return Pattern.matches(DATE_FORMAT_REGEX, date);
+    }
+
+    public Page<Accommodation> GetProductWithCondition(String type, SearchReqDto searchReqDto, Pageable pageable){
+        AccommodationType accommoType = AccommodationType.from(type);
+        if(accommoType ==null){ // 요청 타입이 적절하지 않은 경우
+            throw new BaseException(BaseResponseStatus.TYPE_NOT_FOUND);
+        }
+        if(searchReqDto.getSel_date().isBlank()){ // 기준 날짜가 빈 경우
+            Date today = new Date();
+            SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd");
+            String result = df.format(today);
+            searchReqDto.setSel_date(result);
+
+            Calendar cal = Calendar.getInstance();
+            cal.setTime(today);
+            cal.add(Calendar.DATE, 1);
+            searchReqDto.setSel_date2(df.format(cal.getTime()));
+        }
+        // 날짜가 비어있지 않더라도 형태가 맞지 않은 경우
+        else if(!(isDateFormatValid(searchReqDto.getSel_date()) && isDateFormatValid(searchReqDto.getSel_date2()))){
+            throw new BaseException(BaseResponseStatus.DATE_FORMAT_EXCEPTION);
+        }
+        List<Accommodation> accommodations = productDao.checkProduct(accommoType.getValue() ,searchReqDto);
+        int start = (int) pageable.getOffset();
+        int end = Math.min((start + pageable.getPageSize()), accommodations.size());
+        return new PageImpl<>(accommodations.subList(start, end), pageable, accommodations.size());
+    }
+}
+```
+
+또한 JPA의 PageImpl을 이용해서 클라이언트가 원하는 페이지만 응답할 수 있도록했다.
+
+## Controller
+
+컨트롤러는 클라이언트의 요청을 받고 Service로 작업한 객체를 JSON으로 응답하기만하기 때문에 가장 간단하다.
+
+```java:Controller.java
+@GetMapping(value = "/search/{type}")
+public Page<Accommodation> getReq(@PathVariable("type") String type,
+                                  SearchReqDto searchReqDto,
+                                  @PageableDefault(size=10, direction = Sort.Direction.DESC) Pageable pageable) {
+    return productService.GetProductWithCondition(type, searchReqDto, pageable);
+}
+```
+
+다음주 ASAC에서 JPA를 학습하기 때문에 기회가 된다면 새롭게 제작하는 API에는 JPA를 적용해서 구현해볼 예정이다.

@@ -1,7 +1,7 @@
 ---
 title: AWS Route 53 정리
-date: 2023-10-27
-lastmod: 2023-10-27
+date: 2023-10-28
+lastmod: 2023-10-28
 tags: ['AWS', 'dns', 'route-53', 'DVA-C02']
 draft: false
 summary: 'AWS의 DNS 서비스인 Route 53에 대해 정리한다.'
@@ -47,3 +47,132 @@ Hosted Zone은 도메인과 서브 도메인으로 가능 트래픽의 라우팅
   - 비공개 URL이기 때문에 회사 내부에서만 사용할 수 있다.
 
 Route 53에서 제공하는 모든 hosted zone은 매달 0.5$씩 지불해야한다.
+
+## DNS 쿼리 캐싱을 위한 TTL
+
+TTL은 [ElastiCache](/blog/aws/aws-elastiCache#cache-evictions-and-time-to-live)에서 소개한 것처럼
+캐싱 데이터가 유효한 기간을 정하고 그 기간 안에선 별다른 쿼리 없이 캐싱 데이터를 사용할 수 있게한다. 처음 클라이언트가 DNS에 IP 주소를 쿼리했다면 TTL 동안 클라이언트에 도메인에 맞는 IP 주소가 저장된다.
+이러면 DNS에 다시 쿼리하지 않아도 된다.
+
+TTL이 너무 길면 레코드가 바뀌었을 때 바로바로 업데이트가 안되고 오래된 IP 주소에 사람들은 요청할 것이다. 반대로 너무 짧으면 Route53에 요청이 자주 일어나서 비용이 발생할 것이다.
+그래서 보통 레코드를 바꿀 때 TTL을 짧게하고 사람들이 다 업데이트했다고 하면 TTL을 다시 늘리는 방식의 전략을 사용한다.
+
+## 여러 Region에서 EC2
+
+```sh:ec2-user-data.sh
+#!/bin/bash
+yum update -y
+yum install -y httpd
+systemctl start httpd
+systemctl enable httpd
+# updated script to make it work with Amazon Linux 2023
+CHECK_IMDSV1_ENABLED=$(curl -s -o /dev/null -w "%{http_code}" http://169.254.169.254/latest/meta-data/)
+if [[ "$CHECK_IMDSV1_ENABLED" -eq 200 ]]
+then
+    EC2_AVAIL_ZONE="$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)"
+else
+    EC2_AVAIL_ZONE="$(TOKEN=`curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"` && curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)"
+fi
+echo "<h1>Hello world from $(hostname -f) in AZ $EC2_AVAIL_ZONE </h1>" > /var/www/html/index.html
+```
+
+위와 같은 user-data를 설정한 Ec2를 3개의 서로 다른 region에 설정했다.
+나는 서울, 도쿄, 캐나다 3곳에서 EC2를 생성했다. 다음으로는 로드밸런서를 생성한다.
+로드밸런서를 생성할 때 인스턴스들의 대상그룹을 생성해야한다.
+
+3개의 EC2와 캐나다 EC2와 연결한 ALB의 공인 ip와 AZ를 나타낸 표는 다음과 같다.
+ALB는 캐나다 EC2와 연결했기 때문에 EC2의 AZ가 나타나는 것을 볼 수 있다.
+
+<img alt="route 53 다중 ec2" src="/static/images/aws/aws-route53-multiec2.png" />
+
+### TTL로 인한 문제 만들어 보기
+
+TTL이 만료되지 않으면 이전 IP 주소를 캐싱하고 사용하기 때무에 아래처럼 레코드를 바꿔도 동일한 AZ의 EC2로 이동할 수 있다.
+실험에서 `a.epicktrees.net`의 TTL은 100초다.
+
+<img alt="ttl 이내 상황" src="/static/images/aws/aws-route53-before.png" />
+
+위 그림에서 레코드를 수정한 후 100초 후 아래 그림으로 바뀐다. 서비스를 하는 동안이라면 100초 동안 클라이언트들은 오래된 IP에 접근해서 다른 사이트에 접속하게 될 것이다.
+
+<img alt="ttl 이후 상황" src="/static/images/aws/aws-route53-after.png.png" />
+
+## CNAME vs Alias
+
+- CNAME
+
+  - CNAME은 루트 도메인에 쓰지 못하지만 호스트 이름에 다른 도메인을 포인팅할 수 있다.
+  - `epicktrees.net`의 앞에 뭔가 붙여야한다.
+
+- Alias (별칭 레코드)
+  - 호스트 이름에 AWS 자원(ELB의 DNS 같은 것)을 포인팅할 수 있다.
+    - ELB, CloudFront, API GateWay, Elastic Beanstalk, S3 Websites(버킷 X), VPC, Global Accelerator, Route 53 Recode
+    - **EC2 DNS 이름에 대해선 Alias를 설정할 수 없다.**
+  - 또한 AWS 자원의 IP가 바뀌면 별칭 레코드는 이걸 바로 인식한다.
+  - 루트, 비루트 도메인 모두 가능! `epicktrees.net`에도 적용가능하다.
+  - 무료!, Native 상태 확인 가능, **TTL 설정할 수 없이 AWS가 자동으로 설정한다.**
+
+아래 이미지는 alias(별칭)를 이용해 ALB로 라우팅하는 설정이다.
+
+<img alt="alias를 이용한 elb 라우팅" src="/static/images/aws/aws-alias.png" />
+
+## Route53 라우팅 정책
+
+여기서 라우팅은 트래픽 라우팅이 아닌 `DNS` 관점의 라우팅이다. DNS는 DNS 쿼리에만 반응하고 클라이언트는 HTTP 쿼리를 어떻게 처리해야하는지 알 수 있다.
+Route53의 라우팅 정책은 다음과 같다.
+
+- Simple
+  - 트래픽을 단일 리소스로 보내는 방식. Alias를 사용하면 오직 한 AWS 서비스로만 설정 가능
+  - IP와 도메인 이름을 N 대 1 맵핑
+  - 클라이언트가 IP를 여러개 받으면 아무거나 고른다.
+- Weighted
+  - 요청의 일부를 특정 리소스로 보낼 수 있다. 각 레코드로 보내지는 트래픽의 비율은 `모든 레코드의 가중치`로 `특정 레코드의 가중치`를 나눈 값이다. 그래서 합이 100이 아닐 수 있다. 또한 특정 레코드의 가중치가 0이면 그 레코드론 라우팅하지 않고, 전부 0이 되면 동일한 가중치로 전부 보낸다.
+  - DNS 레코드들은 동일한 이름과 유형을 가져야한다. 이렇게 동일 이름, 유형을 가진 여러 레코드를 만들고 각 가중치마다 라우팅을 분산한다.
+  - 다른 지역의 로드밸런서들을 사용하거나 새로운 애플리케이션을 적은 트래픽으로 테스트하는 경우에 사용한다.
+- Failover
+  - Primary EC2와 Secondary EC2(재해 복구용)이 있을 때, Route 53은 Primary EC2에 Health Check를 의무적으로 한다.
+  - 재해가 일어나면 자동으로 Secondary EC2로 장애조치하며 결과를 보낸다. 이때 Primary와 Secondary는 1대1로 짝지어진다.
+  - 클라이언트가 DNS 쿼리를 Route53에 날리면 정상으로 판단되는 리소스를 보내준다.
+- Latency based
+  - 지연 시간이 가장 짧은, 가장 가까운 리소스로 리다이렉팅하는 정책
+  - 지연 시간은 유저와 AWS region 사이 트래픽이 걸리는 시간을 기반으로 측정. 예를들어 독일 유저와 미국 리전 사이가 가장 가깝다면 미국 리전으로 리다이렉트된다.
+  - 마치 CDN처럼 유저와 가까운 리소스로 Route53이 리다이렉팅해준다.
+- Geolocation
+  - Latency based와 달리 사용자의 실제 위치를 기반으로 라우팅한다.
+  - 위치에 맞는 레코드가 없을 수 있기에 기본 레코드를 생성해야한다.
+  - 콘텐츠 분산, 웹 사이트 로컬라이즈, 로드 밸런싱 등이 있다.
+  - Latency based로 하면 한국인데 일본이 더 가까우면 일본 리소스로 라우팅될 수 있기에 로컬라이즈가 중요하면 좋은 정책이다.
+- Multi-Value Answer
+- Geoproximity (using Route 53 Traffic Flow feature)
+
+## Route53 상태 검사
+
+Route53에서 지원하는 라우팅 정책 중 상태 검사를 해주는 정책은 Weighted와 Latency가 있다.
+
+Simple 정책은 단순한 맵핑이라서 상태 검사 없이 유저에게 단순 라우팅한다.
+
+지역 레벨의 고가용성을 원하는 Multi-Region 상황에서 각 region마다 ALB가 있고 그 뒤에 ASG가 있어서 EC2 그룹이 있다고 가정하자.
+지연시간 기반 정책에서 `epicktrees.net`에 유저가 접속하면 Route53은 유저를 가장 가까운 ALB로 리다이렉팅할 것이다.
+한 지역의 리소스가 다운되면 그쪽으로 라우팅을 하지 않아야하고 이를 위해선 인스턴스의 Health Check해야한다.
+**DNS Failover를 자동화하기 위한 기본 셋팅**
+
+1. 공용 엔드 포인트(서버, app, or 다른 AWS 서비스)를 모니터링
+2. Calculated Health Checks - 다른 상태 확인을 모니터링하는 상태 확인
+3. CloudWatch 경보의 상태를 모니터링하는 상태 확인
+
+### 공용 엔드 포인트 상태 검사 과정
+
+1. 전 세계 15개의 상태 확인이 엔드 포인트의 상태값을 확인
+2. 임계값을 기준으로 정상 혹은 비정상으로 설정. 상태 확인 주기는 기본 30초, (비용을 더 내면 빠른 상태 확인으로 10초마다 가능)
+3. 18% 이상의 상태 확인기가 정상이라고하면 Route 53도 정상으로 판단
+4. 상태 확인기는 로드밸런서로부터 2xx, 3xx 응답을 받아야 정상으로 판단한다. 텍스트 기반 응답일 경우 상태 확인기는 처음 5,120byte를 확인하고 응답 자체에 해당 텍스트가 있는지 확인.
+5. 상태 확인기가 리소스에 접근할 수 있도록 인바운드 정책을 설정해야한다.
+
+### Calculated Health Checks
+
+여러 상태 검사를 계산해서 하나의 상태 검사로 합쳐주는 기능이다. Route 53이 라우팅하는 리소스를 체크하는 하위 Health Checker의 결과 값을 하나로 합쳐서 상위 Health Checker를 확인할 수 있다.
+하위 상태 확인을 합치는 조건은 `AND, OR, NOT`이다. 하위 상태 확인을 256개까지 모니터링할 수 있다.
+
+### Private hosted zones를 모니터링 with CloudWatch
+
+모든 Route 53의 Health Checker는 공용 웹에 있기 때문에 VPC에 있는 리소스를 접근할 수 없다. 그래서 CloudWatch 지표를 연결시켜서 CloudWatch 경보를 Route53 상태 확인에 할당할 수 있다.
+VPC 내부 인스턴스를 CloudWatch로 모니터하고 지표에 문제 생기면 CloudWatch 알람을 생성한다. 상태 확인은 알람을 보고 Route 53은 해당 인스턴스에 라우팅을 멈춘다.
