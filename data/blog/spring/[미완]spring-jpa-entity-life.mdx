@@ -1,0 +1,19 @@
+---
+title: JPA Entity의 생명 주기
+date: 2023-10-30
+lastmod: 2023-10-30
+tags: ['java', 'spring', 'jpa', 'Entity']
+draft: false
+summary: 'Spring JPA에서 Entity 생명주기 정리'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 개요
+
+JPA에서 N+1 문제란 요청이 1개의 쿼리로 처리될 기대했는데 **N개의 추가 쿼리**가 발생하는 현상
+JPA는 다양한 테이블 간 관계를 지원한다.
+
+## OneToMany

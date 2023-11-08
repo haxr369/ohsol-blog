@@ -1,0 +1,270 @@
+---
+title: Hibernate N+1 Select 문제
+date: 2023-11-07
+lastmod: 2023-11-07
+tags: ['java', 'spring', 'jpa', 'N+1-problem', 'hibernate']
+draft: false
+summary: 'Spring JPA에서 N+1 문제와  해결책'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+[JDBC로 작성한 코드를 JPA로 마이그래이션](/blog/spring/spring-jpa-querydsl)에 기본 코드가 있고, N+1 문제를 해결하기 위한 포스팅
+
+## 결론
+
+- @ManyToOne 관계
+
+ManyToOne 관계에서 Lazy, Eager 모두 1+N 문제가 발생하지만, 관계하는 모든 테이블을 **Join**해서 값을 불어오늘 **Fetch Join** 방식을 이용하면 쿼리 수를 줄일 수 있다.
+또한 **ToOne** 관계는 조인해도 row 수가 증가하지 않으므로 한번에 조회해도 문제가 발생하지 않는다.
+
+- @OneToMany 관계
+
+OneToMany 관계는 ToOne 관계처럼 관계하는 테이블을 join하면 생성되는 row 수가 예측할 수 없이 증가할 수 있다.
+이는 DB의 순간 부하가 증가하기에 위험할 수 있다. 그렇기에 Batch Fetch를 통해 DB의 부하를 줄일 수 있지만, 쿼리 수가 증가하는 문제가 있다.
+
+- 페이징
+
+**Fetch Join**은 한 쿼리로 모든 데이터를 불러오는데 사용한다. 그렇기에 DB에서 테이블의 모든 Row를 받아온 후, WAS의 메모리 상에서 페이지 부분만 출력하는 방식이다.
+이 경우 페이징 처리를 하는 이유가 사라지기 때문에 **Fetch Join**을 사용하면 페이징을 할 수 없다.
+
+Batch Fetching 방식은 DB에서 받아올 값의 개수를 정할 수 있기 때문에 페이징처리가 가능하다. 하지만, **Fetch join**처럼 한 쿼리에 모든 값을 불러올 수 없기에 1+1 쿼리가 발생한다.
+
+## ManyToOne 관계에서 N+1 문제란?
+
+Hibernate가 **Select** 쿼리를 만들 때 발생하는 **performance issue**. 여기서 **N**은 child object field의 숫자.
+예를 들어 한 Entity 안에 2개의 자식 객체 필드를 가진다면, 총 3번의 database call이 발생한다.
+
+아래 코드는 `Product` Entity를 **Select**하고 child object field인 Seller를 `사용`했을 때 N+1 문제가 발생한 Hibernate 쿼리다.
+
+```java:makeN+1.java
+@GetMapping("/product")
+public void getProduct(@RequestParam Long productId){
+    Product product = productRepository.findByProductId(productId);
+    log.info("productId : " + productDto.getProductId()+
+              " sellerId :" + productDto.getSellerId() +
+              " sellerName : " + productDto.getSellerName() +
+              " productName : " + productDto.getProductName());
+    return ;
+}
+```
+
+```:N+1 problem
+Hibernate: select p1_0.product_id,
+              p1_0.country_of_manufacture,
+              p1_0.importer,
+              p1_0.kc_certification_information,
+              p1_0.manufacturer,
+              p1_0.product_name,
+              p1_0.registration_date,
+              p1_0.seller_id,
+              p1_0.weight
+            from product p1_0 where p1_0.product_id=?
+
+Hibernate: select s1_0.seller_id,
+              s1_0.seller_address,
+              s1_0.seller_name,
+              s1_0.seller_phone_number
+          from seller s1_0 where s1_0.seller_id=?
+```
+
+첫번째 쿼리를 보면 `Product` Entity의 필드 값을 가져오는데 외래키인 sellerId도 함께 가져오는것을 확인할 수 있다.
+하지만, `@ManyToOne(fetch = FetchType.LAZY)`이기 때문에 Seller Entity의 나머지 필드 값은 프록시 객체이고 사용하려고 했더니
+Seller 테이블에서 Select하는 두번째 Hibernate 쿼리가 생겨난 `N+1`문제가 발생한 것을 확인할 수 있다.
+
+쿼리를 두번 보내는 것은 DB 연결을 2회 해야하는 것이기 때문에 큰 리소스 사용이다.
+어떻게하면 `product`와 `seller`의 값을 한번에 가져오는 쿼리를 보낼 수 있을까?
+
+## OneToMany에서 N+1 문제란?
+
+OneToMany 관계에서 N+1은 아래와 같이 `Department`와 `Employee` 관계에서 **FetchType.LAZY**일 때 발생할 수 있다.
+
+```java:Department.java
+public class Department {
+    @Id
+    @GeneratedValue(strategy = GenerationType.AUTO)
+    private Long id;
+    private String name;
+    @OneToMany(fetch = FetchType.LAZY)
+    @JoinColumn(name = "Dept_id")
+    List<Employee> listOfEmployees;
+}
+```
+
+```java:Employee.java
+public class Employee {
+    @Id
+    @GeneratedValue(strategy = GenerationType.AUTO)
+    private Long id;
+    private String name;
+}
+```
+
+Department를 찾는 쿼리를 보낸다면, 첫번째 쿼리에서 Department를 찾고 다음에는 `List` 안에 있는 Employe 하나하나 쿼리를 날리게된다.
+만약 Employee가 100개 있다면 101개의 쿼리가 발생할 수 있다.
+
+## FETCH JOIN으로 ManyToOne N+1 해결하기
+
+**FETCH JOI**를 사용하면 여러 테이블을 JPQL이 join하고 한 쿼리로 원하는 값을 불러올 수 있게된다.
+일반적인 join과 차이점은 일반적인 join은 `Product` 같이 Select 대상의 필드 값만 영속성 컨텍스트에 저장하게되어 Join 대상인 `Seller`의 정보는 영속성에 넣지 않게된다.
+하지만, FETCH JOI은 전부 넣어서 가져오기 때문에 join 대상도 사용할 때는 `FETCH JOI`을 사용하자.
+
+```java:ProductRepository.java
+public interface ProductRepository extends JpaRepository<Product, Long> {
+    @Query("SELECT p FROM Product p LEFT JOIN Seller s ON p.seller.sellerId = s.sellerId")
+    Product findByProductId(Long id);
+    @Query("SELECT p FROM Product p LEFT JOIN FETCH Seller s ON p.seller.sellerId = s.sellerId")
+    Product findByProductIdWithFetch(Long id);
+}
+```
+
+```:findByProductId를 사용해서 생성된 쿼리
+Hibernate: select p1_0.product_id,
+                  p1_0.country_of_manufacture,
+                  p1_0.importer,
+                  p1_0.kc_certification_information,
+                  p1_0.manufacturer,
+                  p1_0.product_name,
+                  p1_0.registration_date,
+                  p1_0.seller_id,
+                  p1_0.weight
+            from product p1_0
+            left join seller s1_0
+              on p1_0.seller_id=s1_0.seller_id
+            where p1_0.product_id=?
+Hibernate: select s1_0.seller_id,s1_0.seller_address,s1_0.seller_name,s1_0.seller_phone_number from seller s1_0 where s1_0.seller_id=?
+```
+
+```findByProductIdWithFetch를 사용해서 생성된 쿼리
+Hibernate: select p1_0.product_id,p1_0.country_of_manufacture,p1_0.importer,p1_0.kc_certification_information,p1_0.manufacturer,p1_0.product_name,p1_0.registration_date,
+                  s1_0.seller_id,s1_0.seller_address,s1_0.seller_name,s1_0.seller_phone_number,p1_0.weight
+          from product p1_0
+          left join seller s1_0
+            on s1_0.seller_id=p1_0.seller_id
+          where p1_0.product_id=?
+```
+
+`findByProductIdWithFetch` 같이 `join fetch`를 쓰는 것이 문제를 해결할 방법이다.
+
+그럼 JOIN은 쓸모가 없을까? 그렇지 않은것이 join은 영속성에 **Seller** 필드를 넣지 않을 뿐 쿼리에 사용할 수 있다.
+만약 **Product**의 값만 필요한데 seller 이름이 `오찬솔`인 경우 테이블 join을 통해 모은 데이터를 영속성 컨텍스트에 집어넣는 `join fetch` 보다 `join`을 사용하고 `ON` 뒤에 조건문을 작성하는 것이 좋을 것이다.
+
+```:join use case
+@Query("SELECT p FROM Product p LEFT JOIN Seller s ON p.seller.sellerId = s.sellerId AND s.sellerName = :name WHERE p.productId = :id")
+Product findByProductIdAAndSellerName(@Param("id") Long id, @Param("name") String name);
+```
+
+```json:1+N-Problem.json
+
+```
+
+위 같이 join을 사용할때는 join 테이블은 오직 조건을 걸때 사용하고 외래키가 아닌 다른 필드는 사용하면 안된다. 물론 **Fetch Join**이 만능은 아닌 것이
+테이블을 Join하고 모든 데이터를 가져오기 때문에 페이징 처리를 하지 못한다. 여기서 페이징 처리란 필요한 Row만 DB에서 뽑아오는 것이다.
+
+## OneToMany 1+N 해결하기
+
+만약 아래 메서드처럼 2가지 테이블을 Join하는 경우, 심지어 **@...ToMany** 관계가 있는 경우 검색 결과 Row가 매우 증가하기 때문에
+한 개 이상 Join하지 않는 것이 좋다. 예를 들어 `Product`와 **@OneToMany** 관계를 가지는 10개의 `Item`과 10개의 `Review`가 있다고 했을 때,
+모든 `Product`를 검색하는 쿼리를 날리게되면 총 100개의 Row가 생겨난다.
+
+아래는 `Product`, `Seller`, 그리고 `ProductContent`를 한번에 join해서 얻는 결과물이다. `Seller` 데이터 `Product` 데이터가 많이 중복되고, 자주 바뀌는 것은 `ProductContent` 부분이다.
+
+```
+product_id,country_of_manufacture,importer,kc_certification_information,manufacturer,product_name,registration_date,weight,seller_id,seller_address,seller_name,seller_phone_number,content_id,content_img_url
+2,한국,오솔,미국 : 인정 못해,맥도날드 재팬,갤럭시 에어포스 E7 90,2023-11-03,8900,2,백두산로 175 3501동 46호,오찬솔,01066044461,6,https://s3.m3image.1
+2,한국,오솔,미국 : 인정 못해,맥도날드 재팬,갤럭시 에어포스 E7 90,2023-11-03,8900,2,백두산로 175 3501동 46호,오찬솔,01066044461,7,https://s3.m3image.2
+2,한국,오솔,미국 : 인정 못해,맥도날드 재팬,갤럭시 에어포스 E7 90,2023-11-03,8900,2,백두산로 175 3501동 46호,오찬솔,01066044461,8,https://s3.m3image.3
+2,한국,오솔,미국 : 인정 못해,맥도날드 재팬,갤럭시 에어포스 E7 90,2023-11-03,8900,2,백두산로 175 3501동 46호,오찬솔,01066044461,9,https://s3.m3image.4
+2,한국,오솔,미국 : 인정 못해,맥도날드 재팬,갤럭시 에어포스 E7 90,2023-11-03,8900,2,백두산로 175 3501동 46호,오찬솔,01066044461,10,https://s3.m3image.5
+
+```
+
+이 경우 2가지 방법으로 풀 수 있다.
+
+### Distinct 사용
+
+Distinct는 일단 DB에서 100개의 `Product` Row를 가져오고, WAS 내부 메모리에서 중복되는 `Product` 데이터를 제거한다. 마치 아래와 같이 DB에서 전부 가져오고 메모리에 저장하는 것은 중복된 부분을 제거하고 저장한다.
+
+```
+product_id,country_of_manufacture,importer,kc_certification_information,manufacturer,product_name,registration_date,weight,seller_id,seller_address,seller_name,seller_phone_number,content_id,content_img_url
+2,한국,오솔,미국 : 인정 못해,맥도날드 재팬,갤럭시 에어포스 E7 90,2023-11-03,8900,2,백두산로 175 3501동 46호,오찬솔,01066044461,6,https://s3.m3image.1
+                                                                                                            ,7,https://s3.m3image.2
+                                                                                                            ,8,https://s3.m3image.3
+                                                                                                            ,9,https://s3.m3image.4
+                                                                                                            ,10,https://s3.m3image.5
+
+```
+
+Select 옆에 distinct를 붙여서 사용하여 Repository에서는 다음과 같이 사용할 수 있다.
+
+```
+@Query("SELECT distinct p FROM Product p " +
+            "LEFT JOIN FETCH p.seller ps " +
+            "LEFT JOIN FETCH p.productContents ")
+    List<Product> findAllProduct();
+```
+
+다만, Distinct를 사용하면 DB 쿼리를 받아올 때, 모든 데이터를 가져오고 메모리에서 **후**처리를 하는 것이기 때문에 필요없는 네트워크 오버해드가 발생할 수 있고,
+**@OneToMany** 관계의 문제인 총 **Row 수**를 예측할 수 없는 특징 때문에 페이징 처리를 하지 못한다. 여기서 페이징 처리란 필요한 Row만 DB에서 뽑아오는 것이다.
+
+### Batch fetcing로 페이징 처리하기
+
+Batch fetcing은 프록시 객체가 접근될 때 **Hibernate**가 여러 초기화되지 않는 프록시 객체를 가져오는 것.
+Batch fetcing은 lazy select fetching 전략을 최적화한 것으로 볼 수 있다. 설정 방법은 **Class(Entity)**에 하는 방법과 **Collection(WAS 전체)**에 하는 방법이 있다.
+
+만약 Batch Size를 10개로 지정하면 DB에서 25개의 Row를 가져올 때, `10,10,5` 순서로 가져오게된다. 그러므로 Fetch Join 보다는 SQL 쿼리가 많아지지만, 모든 데이터를 DB에서 가져오는 Fetch Join 보다는 네트워크 사용량이 감소한다.
+Batch fetcing은 **@ManyToOne**이나 **@OneToMany** 어디서나 사용할 수 있다. 다만, **...ToOne** 관계에서 Betch fetching으로 이득을 볼 수 없기 때문에 쿼리 수를 아끼기 위해서 Fetch Join을 사용하는 것이 좋다.
+
+Batch fetching을 적용하는 방법은 `application.properties`에 아래와 같이 사이즈를 설정할 수 있다. 보통 100~1000 사이 값을 정한다고 한다. 너무 적으면 쿼리 수가 많아지고, 1000개를 넘어가면 DB의 순간 부하가 증가할 수 있다.
+하지만, 애플리케이션은 100이든 1000이든 결국 전체 데이터를 로딩해야 하므로 메모리 사용량은 같다. **문제는 몇번 로딩하느냐!!**
+
+```
+spring.jpa.properties.hibernate.default_batch_fetch_size = 5
+```
+
+`Page<Product> findAll(Pageable pageable);`은 일반적인 Lazy 방식의 쿼리를 발생시킨다.
+하지만, Batch Fetch를 적용해서 10개씩 값을 가져오는 것을 확인할 수 있고, 최종적으로 2개의 `Product` 객체를 로드하는 것을 알 수 있다.
+아래는 Hibernate 출력 결과
+
+```
+Hibernate:
+    select
+        p1_0.product_id,
+        p1_0.country_of_manufacture,
+        p1_0.importer,
+        p1_0.kc_certification_information,
+        p1_0.manufacturer,
+        p1_0.product_name,
+        p1_0.registration_date,
+        p1_0.seller_id,
+        p1_0.weight
+    from
+        product p1_0
+    limit
+        ?,?
+2023-11-07T10:54:06.169+09:00  INFO 22001 --- [nio-8080-exec-2] c.e.s.p.controller.ProductConrollerV2    : Product ID: 1
+2023-11-07T10:54:06.169+09:00  INFO 22001 --- [nio-8080-exec-2] c.e.s.p.controller.ProductConrollerV2    : Product Name: 아이폰 에어포스 E7 90
+Hibernate:
+    select
+        s1_0.seller_id,
+        s1_0.seller_address,
+        s1_0.seller_name,
+        s1_0.seller_phone_number
+    from
+        seller s1_0
+    where
+        s1_0.seller_id in (?,?,?,?,?,?,?,?,?,?)
+2023-11-07T10:54:06.173+09:00  INFO 22001 --- [nio-8080-exec-2] c.e.s.p.controller.ProductConrollerV2    : Seller Name: 오솔
+Hibernate:
+    select
+        p1_0.product_id,
+        p1_0.content_id,
+        p1_0.content_img_url
+    from
+        product_content p1_0
+    where
+        p1_0.product_id in (?,?,?,?,?,?,?,?,?,?)
+
+```

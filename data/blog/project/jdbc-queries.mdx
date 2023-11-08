@@ -35,10 +35,10 @@ SELECT a.*
 FROM accommodation a
 LEFT JOIN accommodation_keyword ak
     ON a.accommodation_id = ak.accommodation_id
-WHERE keyword_id IN (13) AND a.type=3
+WHERE a.type=1 AND keyword_id IN (5,7)
 GROUP BY a.accommodation_id
-HAVING COUNT(DISTINCT keyword_id) >= 1 AND
-a.price BETWEEN 10000 AND 100000 AND
+HAVING COUNT(DISTINCT keyword_id) >= 2 AND
+a.price BETWEEN 0 AND 10000000 AND
 a.accommodation_id NOT IN (
     SELECT accommodation_id FROM reserve
     WHERE NOT ((DATE_FORMAT(reserve_date, '%Y-%m-%d') >= '2023-10-10') AND
@@ -52,17 +52,14 @@ JdbcTemplate에서 위 쿼리를 사용하려면 실제 들어가는 `3`,`2023-1
 ## Repository
 
 ```java:ProductDao.java
-
-@Repository
-@RequiredArgsConstructor // jdbcTemplate 의존성 추가
 public class ProductDao {
     private final JdbcTemplate jdbcTemplate;
     private final RowMappers rowMappers;
 
-    private String createParameterPlaceholders(List<Long> keywords) {
+    private String createParameterPlaceholders(List<Integer> keywords) {
         StringBuilder placeholders = new StringBuilder();
         for (int i = 0; i < keywords.size(); i++) {
-            placeholders.append("?");
+            placeholders.append(keywords.get(i));
             if (i < keywords.size() - 1) {
                 placeholders.append(",");
             }
@@ -70,28 +67,32 @@ public class ProductDao {
         return placeholders.toString();
     }
 
-    public List<Accommodation> checkProduct(int type, SearchReqDto searchReqDto) {
-        String BaseQuery ="SELECT a.* FROM accommodation a " +
-                "LEFT JOIN accommodation_keyword ak ON a.accommodation_id = ak.accommodation_id "+
-                "WHERE a.type=?";
+    public List<AccommodationResDto> checkProduct(int type, SearchReqDto searchReqDto) {
+        // jdbc 쿼리 작성 요령 중간에 if문 때문에 문제가 생기는듯!
+        // createParameterPlaceholders에 ?를 붙여놓고 값을 입력하지 않았다.
+        String BaseQuery = "SELECT a.* FROM accommodation a " +
+                "LEFT JOIN accommodation_keyword ak ON a.accommodation_id = ak.accommodation_id " +
+                "WHERE a.type = ? ";
+
         if(!searchReqDto.getKeywords().isEmpty()){
-            BaseQuery +=
-                    "AND keyword_id IN (" + createParameterPlaceholders(searchReqDto.getKeywords()) + ") ";
+            log.info("keywords : "+createParameterPlaceholders(searchReqDto.getKeywords()));
+            BaseQuery += " AND keyword_id IN (" + createParameterPlaceholders(searchReqDto.getKeywords()) + ") ";
         }
-        BaseQuery += "GROUP BY a.accommodation_id " +
-                "HAVING COUNT(DISTINCT keyword_id) >= " + searchReqDto.getKeywords().size() + " AND " +
-                "a.price BETWEEN ? AND ? AND " +
-                "a.accommodation_id NOT IN ( " +
-                "    SELECT accommodation_id FROM reserve " +
-                "    WHERE NOT ((DATE_FORMAT(reserve_date, '%Y-%m-%d') >= ?) AND " +
-                "        (DATE_FORMAT(end_date, '%Y-%m-%d') <= ?))";
+
+        BaseQuery +=   "GROUP BY a.accommodation_id " +
+                "HAVING COUNT(DISTINCT keyword_id) >= "+ searchReqDto.getKeywords().size() +
+                " AND a.price BETWEEN ? AND ? " +
+                "AND a.accommodation_id NOT IN (" +
+                "SELECT accommodation_id FROM reserve " +
+                "WHERE NOT ((DATE_FORMAT(reserve_date, '%Y-%m-%d') >= ?) " +
+                "AND (DATE_FORMAT(end_date, '%Y-%m-%d') <= ? )));";
         try{
             Object[] ProductSearchObj = new Object[]{
                     type,
                     searchReqDto.getMin_price(),
                     searchReqDto.getMax_price(),
-                    searchReqDto.getSel_date2(),
-                    searchReqDto.getSel_date()
+                    Date.valueOf(searchReqDto.getSel_date2()),
+                    Date.valueOf(searchReqDto.getSel_date())
             };
             return jdbcTemplate.query(BaseQuery, rowMappers.accommodationRowMapper(), ProductSearchObj);
         }
@@ -152,7 +153,7 @@ public class ProductService {
             searchReqDto.setSel_date2(df.format(cal.getTime()));
         }
         // 날짜가 비어있지 않더라도 형태가 맞지 않은 경우
-        else if(!(isDateFormatValid(searchReqDto.getSel_date()) && isDateFormatValid(searchReqDto.getSel_date2()))){
+        if(!(isDateFormatValid(searchReqDto.getSel_date()) && isDateFormatValid(searchReqDto.getSel_date2()))){
             throw new BaseException(BaseResponseStatus.DATE_FORMAT_EXCEPTION);
         }
         List<Accommodation> accommodations = productDao.checkProduct(accommoType.getValue() ,searchReqDto);
@@ -179,3 +180,4 @@ public Page<Accommodation> getReq(@PathVariable("type") String type,
 ```
 
 다음주 ASAC에서 JPA를 학습하기 때문에 기회가 된다면 새롭게 제작하는 API에는 JPA를 적용해서 구현해볼 예정이다.
+또한 Service의 Date형태의 String의 Validation은 커스텀 어노테이션을 만들어서 예외처리할 예정이다.

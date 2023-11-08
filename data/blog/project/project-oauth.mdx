@@ -1,0 +1,268 @@
+---
+title: 프로젝트에 OAuth를 적용한 방법
+date: 2023-10-31
+tags: ['OAuth', 'Spring-security', 'Session', 'cookie']
+draft: false
+summary: '여기어때 프로젝트를 수행하면서 Spring Security를 이용한 OAuth를 적용한 방법'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 개요
+
+프로젝트의 유저 인증 방법을 OAuth를 통한 구글, 카카오, 그리고 페이스북 소셜 로그인을 하기로 했다.
+이전 [OAuth](/blog/Network/oauth) 포스팅을 보면 여러 프로토콜이 있는데 Spring Security는 이 프로토콜들을 간단하게
+`SecurityConfig`에 작성한 내용을 바탕으로 만들어주기 때문에 편리하다.
+
+그리고 Spring Security는 각 설정의 구현을 커스텀하게 작성할 수 있어서 유저 정보처리도 원활하게 할 수 있는 장점이 있다.
+
+## SecurityConfig
+
+```java:SecurityConfig.java
+@Configuration
+@RequiredArgsConstructor
+@EnableWebSecurity
+@EnableMethodSecurity
+public class SecurityConfig{
+    private final CustomOAuth2UserService customOAuth2UserService;
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http.csrf(AbstractHttpConfigurer::disable)
+                .cors(Customizer.withDefaults())
+                .headers(headers -> headers
+                        .frameOptions(HeadersConfigurer.FrameOptionsConfig::disable))
+                .authorizeHttpRequests(authorize -> authorize
+                        .requestMatchers("/").permitAll()
+                        .requestMatchers("/login","/try/**","/hello/**","/swagger-ui.html/**").permitAll()
+                        .requestMatchers("/api/product/**").permitAll()
+                        .requestMatchers("/oauth2/authorization/**","/oauth2/code/**").permitAll()
+                        .requestMatchers("/api/v1/**").permitAll()
+                        .anyRequest().authenticated())
+                .logout((logout) -> logout
+                        .logoutSuccessUrl("/")  )
+                .oauth2Login(oauth2Login -> oauth2Login
+                        .loginPage("/login")
+                        .redirectionEndpoint(redirectionEndpointConfig -> redirectionEndpointConfig
+                                .baseUri("/oauth2/code/*"))
+                        .userInfoEndpoint(userInfoEndpointConfig -> userInfoEndpointConfig
+                                .userService(customOAuth2UserService))
+                        .defaultSuccessUrl("https://api.epicktrees.net/hello-world"));
+        return http.build();
+    }
+}
+```
+
+### 설정 설명
+
+1. csrf : Cross Site Request Forgery를 어떻게 막을 건지 설정. test 환경이기 때문에 사용하지 않았다.
+2. headers : `sameOrigin` 같은 기본 헤더 설정. 프로젝트에서는 설정하지 않았다.
+3. authorizeHttpRequests : URI에 역할을 설정할 수 있다. 인증하지 않아도 요청할 수 있는 `permitAll`이나 프로젝트에서는 사용하지 않았지만 `hasAuthority`를 이용해서 URI에 접근할 수 있는 범위를 설정할 수 있다.
+4. logout : 로그아웃시 동작과 리다이렉트할 URI를 설정
+5. oauth2Login : **OAuth** 설정. 로그인 페이지 URI나 Authorization Request를 응답 받을 **redirect endpoint** 등 설정할 수 있다. userInfoEndpoint의 userService에서 access token과 유저 정보를 요청하는 커스텀 서비스를 주입할 수 있다.
+
+### 어노테이션
+
+1. Configuration : 설정 클래스의 Bean을 Spring Container에 등록하는 어노테이션
+2. RequiredArgsConstructor : 클래스에 `final` 필드를 인자로하는 생성자를 만들고, Container에 존재하는 Bean을 주입
+3. EnableWebSecurity : `@Configuration`와 함께 쓰면 Spring Security의 기본 설정을 커스텀하게 바꿀 수 있게한다.
+4. EnableMethodSecurity : `@Configuration`와 함께 쓰며, 메서드 요청 전에 인증을 설정할 수 있다.
+
+## CustomOAuth2UserService
+
+```java:CustomOAuth2UserService.java
+@RequiredArgsConstructor
+@Service
+public class CustomOAuth2UserService implements OAuth2UserService<OAuth2UserRequest, OAuth2User> {
+    private final UserRepository userRepository;
+    private final HttpSession httpSession;
+    @Override
+    public OAuth2User loadUser(OAuth2UserRequest userRequest) throws OAuth2AuthenticationException {
+        DefaultOAuth2UserService delegate = new DefaultOAuth2UserService();
+        OAuth2User oAuth2User = delegate.loadUser(userRequest);
+        /* registrationId
+         * 현재 로그인 진행 중인 서비스 구분하는 코드.
+         * 이후에 여러가지 추가할 때 네이버인지 구글인지 구분
+         */
+        String registrationId = userRequest.getClientRegistration().getRegistrationId();
+        System.out.println("--registrationId--");
+        System.out.println(registrationId);
+        /* userNameAttributeName
+         * OAuth2 로그인 진행 시 키가 되는 필드값 (=Primary Key)
+         * 구글 기본 코드: sub, 네이버 카카오 등은 기본 지원 x
+         * 이후 네이버, 구글 로그인 동시 지원시 사용
+         */
+        String userNameAttributeName = userRequest.getClientRegistration().getProviderDetails()
+                .getUserInfoEndpoint().getUserNameAttributeName();
+        /* OAuthAttributes
+         * OAuth2UserService를 통해 가져온 OAuth2User의 attribute
+         * 네이버 등 다른 소셜 로그인도 이 클래스 사용
+         */
+        OAuthAttributes attributes = OAuthAttributes.
+                of(registrationId, userNameAttributeName, oAuth2User.getAttributes());
+
+        System.out.println("--attributes--");
+        System.out.println(attributes.getAttributes());
+        System.out.println("--oAuth2User name--");
+        System.out.println(oAuth2User.getName());
+
+        User user = saveOrUpdate(attributes);
+
+        /* SessionUser
+         * 세션에 사용자 정보를 저장하기 위한 dto 클래스
+         * (User 클래스를 사용하지 않고 새로 만들었다.)
+         */
+        httpSession.setAttribute("user", new SessionUser(user));
+
+        return new DefaultOAuth2User(
+                Collections.singleton(new SimpleGrantedAuthority(user.getRoleKey())),
+                attributes.getAttributes(),
+                attributes.getNameAttributeKey());
+    }
+
+    // 처음 회원가입하는 유저 정보 저장
+    // 유저 정보 업데이트
+    // 궁금한 점은 data source를 사용하지 않고 그냥 repository를 사용하네?
+    private User saveOrUpdate(OAuthAttributes attributes) {
+        User user = userRepository.findByUserEmail(attributes.getUserEmail())
+                .orElse(attributes.toEntity());
+
+        return userRepository.save(user);
+    }
+}
+
+```
+
+`CustomOAuth2UserService`는 `OAuth2UserService` 인터페이스를 구현하고 실질적으로 사용되는 `loadUser` 메서드를 구현했다. 만약 커스텀 서비스를 사용하지 않는다면 기본 구현 클래스인 `DefaultOAuth2UserService`가 적용된다.
+프로젝트에선 기본 클래스의 메서드인 loadUser에서 추가적으로 Session 저장소에 유저 정보를 넣거나 DB에 유저 데이터를 넣는 등 추가적인 작업을 수행하기 위해 CustomOAuth2UserService을 작성했다.
+
+Spring Security를 이용해서 OAuth를 구현하는 작업 중 `OAuthAttributes` 객체를 만들기 위해 `oAuth2User` 객체를 가공하는 작업이 가장 인상 깊었다.
+OAuth 로그인(회원가입)하는 소셜마다 다른 형식으로 유저의 속성 값을 출력했었다. 아래는 예시 속성 값들이다.
+
+```json:Google.json
+{sub=123245453434646,
+	name=오찬솔,
+	given_name=찬솔,
+	family_name=오,
+	picture=https://lh3.googleusercontent.com/a/ACg8ocJbRxI2ObfQV1bIT6hoPPHNyRlTIfwuJSRDdFuoRHi2=s96-c,
+	email=haxr369@gmail.com,
+	email_verified=true,
+	locale=ko}
+```
+
+```json:Facebook.json
+{id=2132243533466464,
+	name=오찬솔,
+	email=haxr369@gmail.com}
+```
+
+```json:Kakao.json
+{id=1234321513,
+	connected_at=2023-09-16T07:00:34Z,
+	properties={nickname=오찬솔},
+	kakao_account={
+		profile_nickname_needs_agreement=false,
+		profile={nickname=오찬솔},
+	has_email=true,
+	email_needs_agreement=false,
+	is_email_valid=true,
+	is_email_verified=true,
+	email=haxr369@gmail.com}}
+```
+
+위처럼 각기 다른 형식의 속성 값들을 DB의 한 테이블에 넣으려면 조건문을 이용해서 소셜 마다 다른 방식으로 객체를 생성해야했다. 그런 역할은 OAuthAttributes가 수행했다.
+
+## OAuthAttributes
+
+```java:OAuthAttributes.java
+@Getter
+@Builder // 빌더 패턴으로 객체 생성
+public class OAuthAttributes {
+    private Map<String, Object> attributes;
+    private String nameAttributeKey;
+    private String name;
+    private String userEmail;
+    private String picture;
+    private String social;
+    private String nickName;
+
+    /* of()
+     * OAuth2User에서 반환하는 사용자 정보는 Map이기 때문에 값 하나하나 변환
+     */
+    public static OAuthAttributes of(String registrationId, String userNameAttributeName, Map<String, Object> attributes) {
+        if (registrationId.equals("kakao")){
+            System.out.println("--user infos--");
+            Map<String, Object> kakaoAccount = (Map<String, Object>)attributes.get("kakao_account");
+            Map<String, Object> kakaoProfile = (Map<String, Object>)kakaoAccount.get("profile");
+            System.out.println((String) kakaoProfile.get("nickname"));
+            System.out.println((String) kakaoAccount.get("email"));
+
+            Map<String, Object> commonAttributes =new HashMap<String,Object>();
+            commonAttributes.put(userNameAttributeName, attributes.get(userNameAttributeName));
+            commonAttributes.put("name", kakaoProfile.get("nickname"));
+            commonAttributes.put("nickname", kakaoProfile.get("nickname"));
+            commonAttributes.put("userEmail", kakaoAccount.get("email"));
+            commonAttributes.put("picture", kakaoProfile.get("profile_image_url"));
+            commonAttributes.put("social",registrationId);
+
+            return OAuthAttributes.builder()
+                    .name((String) kakaoProfile.get("nickname"))
+                    .nickName((String) kakaoProfile.get("nickname"))
+                    .userEmail((String) kakaoAccount.get("email"))
+                    .picture((String) kakaoProfile.get("profile_image_url"))
+                    .social(registrationId)
+                    .attributes(commonAttributes)
+                    .nameAttributeKey(userNameAttributeName)
+                    .build();
+
+        } else if (registrationId.equals("facebook")) {
+
+            System.out.println("--user infos--");
+            System.out.println((String) attributes.get("name"));
+            System.out.println((String) attributes.get("email"));
+
+            Map<String, Object> commonAttributes =new HashMap<String,Object>();
+            commonAttributes.put(userNameAttributeName, attributes.get(userNameAttributeName));
+            commonAttributes.put("name", attributes.get("name"));
+            commonAttributes.put("nickname", attributes.get("name"));
+            commonAttributes.put("userEmail", attributes.get("email"));
+            commonAttributes.put("picture", attributes.get("profile_image_url"));
+            commonAttributes.put("social",registrationId);
+
+            return OAuthAttributes.builder()
+                    .name((String) attributes.get("name"))
+                    .nickName((String) attributes.get("name"))
+                    .userEmail((String) attributes.get("email"))
+                    .social(registrationId)
+                    .attributes(commonAttributes)
+                    .nameAttributeKey(userNameAttributeName)
+                    .build();
+        }
+        else { // google
+
+            Map<String, Object> commonAttributes =new HashMap<String,Object>();
+            commonAttributes.put(userNameAttributeName, attributes.get(userNameAttributeName));
+            commonAttributes.put("name", attributes.get("name"));
+            commonAttributes.put("nickname", attributes.get("name"));
+            commonAttributes.put("userEmail", attributes.get("email"));
+            commonAttributes.put("picture", attributes.get("picture"));
+            commonAttributes.put("social",registrationId);
+
+            return OAuthAttributes.builder()
+                    .name((String) attributes.get("name"))
+                    .nickName((String) attributes.get("name"))
+                    .userEmail((String) attributes.get("email"))
+                    .picture((String) attributes.get("picture"))
+                    .social(registrationId)
+                    .attributes(commonAttributes)
+                    .nameAttributeKey(userNameAttributeName)
+                    .build();
+        }
+    }
+}
+```
+
+`DefaultOAuth2User`는 HashMap 기반의 키-값 맵을 필요로 하기 때문에 각 소셜마다 다른 방식으로 attribute 객체를 생성했다.
+소셜 서비스 고유의 `registrationId` 기반으로 조건문을 수행할 수 있었고, 위의 `oAuth2User` 객체의 구조를 분석해서 필요한 속성 값을 체웠다.
+이러한 방식으로 Spring Security로 OAuth를 구현했고 여러 소셜 서비스에서 유저 정보를 얻을 수 있었다.

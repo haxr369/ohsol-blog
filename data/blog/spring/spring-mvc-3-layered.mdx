@@ -1,7 +1,7 @@
 ---
 title: Spring MVC와 3-Layered Architecture
-date: 2023-10-26
-lastmod: 2023-10-27
+date: 2023-10-31
+lastmod: 2023-10-31
 tags: ['java', 'MVC', '3-lastmod-Architecture']
 draft: false
 summary: 'Spring 프레임워크에서 자주 쓰이는 어노테이션 정리'
@@ -33,13 +33,15 @@ Spring MVC는 Front Controller와 Controller가 model을 주고 받으면서 사
 
 위 그림은 Spring MVC의 구조를 나타낸다. 사용자의 요청에대한 응답을 화면 상에 보여주기위해 아래와 같은 순서로 작업한다.
 
-1. 클라이언트의 요청을 DispatcherServlet이 받음
-2. 요청에 맞는 정적컨텐츠가 존재하는지 확인, 없으면 Servlet Container에 요청
-3. Handler Mapping으로 요청에 맞는 컨트롤러를 찾기
-4. HandlerAdapter에게 요청을 위임, HandlerAdapter는 Controller에게 요청
-5. Controller는 적절한 로직(서비스와 DAO를 거침)을 수행하고 HandlerAdapter를 통해 DispatcherServlet에 Model과 View를 응답
-6. DispatcherServlet은 ViewResolver에게 응답에 맞는 template이 있는지 확인
-7. DispatcherServlet은 적절한 template에 Model을 주입하고 결과를 클라이언트에게 응답한다.
+1. 클라이언트의 요청을 DispatcherServlet이 받음, 정적 컨텐츠가 있다면 바로 응답
+2. 동적 컨테츠인 경우 DispatcherServlet은 Servlet Container에게 요청을 전달
+3. Servlet Container는 Servlet을 생성하고 처리를 위임
+4. Handler Mapping으로 요청에 맞는 컨트롤러 찾기
+5. HandlerAdapter에게 요청을 위임
+6. Controller는 적절한 로직(서비스, 레포지토리)을 수행
+7. Controller를 통해 DispatcherServlet에 Model과 View를 응답
+8. DispatcherServlet은 ViewResolver에게 응답에 맞는 템플릿이 있는지 확인
+9. DispatcherServlet은 적절한 템플릿에 Model을 주입하고 결과를 클라이언트에게 응답
 
 <img alt="spring mvc" src="/static/images/spring/spring-mvc.png" />
 
@@ -48,30 +50,19 @@ Spring MVC에서 DispatcherServlet은 Front controller로 요청에 맞는 Contr
 
 ## Spring MVC의 컨테이너
 
-Spring MVC 컨테이너는 Servlet Container와 Spring Container 두가지가 있고,
-각각은 (Servlet) WebApplicationContext와 Root WebApplicationContext와으로 구분될 수 있고, 아래 순서를 따른다.
-
-1. Servlet Container 생성 - (ServletContext)
-2. Servlet Container는 ServletContextListener 실행.
-3. Servlet Container는 Spring Container 생성 - (ApplicationContext)
-
-- (Servlet) WebApplicationContext : @Controller, view resolvers 같은 View와 관련된 빈 저장. ServletContext도 접근 가능
-- Root WebApplicationContext : 비즈니스 로직과 관련된 @Service, @Repository, @Component 등 전역적으로 사용할 빈 저장
-
-### Servlet과 Servlet Container
+DispatcherServlet은 클라이언트의 모든 요청을 핸들링. 정적인 페이지가 존재하는지 확인하고, 동적인 페이지는 Servlet Container에게 위임한다. 그리고 Servlet WebApplicationContext와 Root WebApplicationContext를 생성한다.
+Servlet WebApplicationContext(Servlet Container)에는 Controller Bean이 있고, Root WebApplicationContext(Spring Container)에는 Service나 Repository Bean처럼 비즈니스 로직과 관련된 Bean이 저장돼있다.
 
 Servlet Container는 ServletContext(web.xml에 작성된 모든 웹 애플리케이션 자원 Servlet, filters,and listeners이 저장된 곳)를 생성한다.
 Servlet은 클라이언트의 요청, 처리, 응답을 수행하고 생명주기는 다음과 같다.
 
-Servlet은 Container에 `등록`되어야하고, JEE나 Spring은 Servlet을 실행시킬 수 있다.
-Servlet이 초기화되면, 클라이언트의 요청을 받을 준비가 된 것이다.
-Container는 요청을 받아 Servlet에게 전달하고 Servlet이 `처리`하도록 한다.
-Servlet이 `제거`되면 더 이상 요청을 받을 수 없다.
+1. Servlet은 Servlet Container에 `등록`되어야하고, JEE나 Spring은 Servlet을 실행시킬 수 있다.
+2. Servlet이 초기화되면, 클라이언트의 요청을 받을 준비가 된 것이다.
+3. Container는 요청을 받아 Servlet에게 전달하고 Servlet이 `처리`하도록 한다.
+4. Servlet이 `제거`되면 더 이상 요청을 받을 수 없다.
 
-클라이언트의 요청은 Container가 생성하는 **HttpServletRequest**로, 응답은 **HttpServletResponse** 객체로 표현되고 Servlet에게 처리를 위임한다.
+클라이언트의 요청은 Servlet Container가 생성하는 **HttpServletRequest**로, 응답은 **HttpServletResponse** 객체로 표현되고 Servlet에게 처리를 위임한다.
 만약 Servlet이 Servlet WebApplicationContext에 필요한 빈을 못 찾으면 Root WebApplicationContext로 처리를 위임한다.
-
-### Root WebApplicationContext
 
 ## 3계층 아키텍쳐 패턴
 

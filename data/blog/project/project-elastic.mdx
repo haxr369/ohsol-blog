@@ -1,0 +1,164 @@
+---
+title: Elastic Search 첫 사용
+date: '2023-11-01'
+lastmod: '2023-11-01'
+tags: ['java', 'Elasticsearch', 'Docker']
+draft: false
+summary: '프로젝트의 텍스트 검색을 위해 Elasticsearch를 적용하는 방법'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={2} />
+
+## 개요
+
+여기어때 프로젝트에서 검색창에 텍스트를 입력하면 그 텍스트에 맞는 숙소를 찾는 기능을 다음과 같이 구현했었다.
+Spring Data JPA의 `Containing` 메서드는 숙소 이름에 `%accommodationName%`가 포함된 숙소를 검색하는 쿼리를 작성한다.
+
+```java:like.java
+Page<Accommodation> findByAccommodationNameContaining(String accommodationName, Pageable pageable);
+```
+
+프로젝트 고도화를 위해서 숙소 이름뿐만 아니라 키워드나 숙소 설명을 텍스트 검색 범위에 포함시키고 싶었다. 하지만, 테이블의 모든 텍스트에 `like` 쿼리를 날리는 것은 비효율적인 방식으로 생각됐다.
+더 효율적인 텍스트 검색을 위해 고민한 결과 **Elasticsearch**라는 기술을 발견했다.
+
+## Elasticsearch
+
+Elasticsearch는 NoSQL Json based Data store이다. 흥미로운 점은 REST full API를 제공한다는 점이다. 따라서 WAS가 Elasticsearch에 REST API를 통해 쿼리를 날릴 수 있다.
+보통 Elasticsearch는 log, metrix나 다른 많은 소스로 부터 들어오는 데이터를 Json 문서화하고 관리하는데 사용한다.
+
+RDB와 비교했을 때, 아래와 같이 맵핑할 수 있다.
+
+<img alt="엘라스틱 서치와 RDB 비교" src="/static/images/project/project-elasticsearch-rdb.png" />
+
+RDB는 row에 여러 값이 있기 때문에 검색을 위해선 모든 row를 탐색해야한다. 하지만, Elasticsearch는 텍스트가 키로 존재하고 값은 텍스트를 포함하는 row(Document)로 존재하기 때문에
+텍스트를 입력하는 즉시 텍스트를 포함하는 문서를 찾을 수 있다. 그 덕분에 방대한 데이터를 신속하게 처리할 수 있다.
+
+하지만, Document 간의 조인을 수행할 수 없고, 트랜잭션이 제공되지 않는다.
+
+## Elasticsearch 활용 구조
+
+<img
+  alt="엘라스틱 서치의 활용 구조"
+  src="/static/images/project/project-elasticsearch-architecture.png"
+/>
+
+위 이미지를 보면, WebAPI Server와 RDB는 기존에 자주 사용되던 아키텍쳐다. 하지만, 중간에 logstash와 Elasticsearch가 있는데.
+logstash는 RDB의 변화를 읽고 Elasticsearch Cluster에 변화를 입력하는 역할을 한다. Elasticsearch는 받은 값으로 Document를 만들고
+최종적으로 WebAPI Server가 읽는 과정으로 이뤄진다.
+
+## Elasticsearch를 local에서 사용해보기
+
+[Elasticsearch 공식문서](https://www.elastic.co/guide/en/elasticsearch/reference/current/run-elasticsearch-locally.html#_send_requests_to_elasticsearch)에
+따르면 개인 컴퓨터에서 Elasticsearch를 실행하는 것은 docker container로 Elasticsearch 서버와 Kibana 서버를 함께 실행시켜야하고,
+Kibana에서는 Elasticsearch에 저장된 내용을 브라우저로 볼 수 있게한다.
+
+### Elasticsearch Container 실행하기
+
+```sh:elastic.sh
+docker network create elastic
+docker pull docker.elastic.co/elasticsearch/elasticsearch:8.10.4
+docker run --name elasticsearch --net elastic -p 9200:9200 -p 9300:9300 -e "discovery.type=single-node" -t docker.elastic.co/elasticsearch/elasticsearch:8.10.4
+```
+
+서로 다른 터미널에서 실행하는 것을 추천.
+
+```sh:kibana.sh
+docker pull docker.elastic.co/kibana/kibana:8.10.4
+docker run --name kibana --net elastic -p 5601:5601 docker.elastic.co/kibana/kibana:8.10.4
+```
+
+docker 명령어를 실행시키면 Elasticsearch 서버의 터미널에 `elastic user password`와 `kibana enrollment`가 생성된다. 이를 복사하고 kibana 터미널에 생성된 http Url에 브라우저로 접속하면
+kibana에서 제공하는 UI를 볼 수 있다. Kibana UI 상단의 검색창에 `dev tools`를 검색하면 **CURL**/을 이용해서 Elasticsearch에 Document를 넣고 검색할 수 있는 테스트기가 뜬다.
+
+```
+# 한번에 데이터를 입력하는 명령
+PUT customer/_bulk
+{ "create": { } }
+{ "firstname": "Mon1ica","lastname":"Rambeau2"}
+{ "create": { } }
+{ "firstname": "Car1ol","lastname":"Danvers2"}
+{ "create": { } }
+{ "firstname": "Wanda1","lastname":"Maximoff2"}
+{ "create": { } }
+{ "firstname": "Jennifer1","lastname":"Takeda2"}
+```
+
+```json:put_result.json
+{
+  "errors": false,
+  "took": 4,
+  "items": [
+    {
+      "create": {
+        "_index": "customer",
+        "_id": "igyTiIsBqE5tKjERYF5D",
+        "_version": 1,
+        "result": "created",
+        "_shards": {
+          "total": 2,
+          "successful": 1,
+          "failed": 0
+        },
+        "_seq_no": 4,
+        "_primary_term": 1,
+        "status": 201
+      }
+    },
+    {
+      "create": {
+        "_index": "customer",
+        "_id": "iwyTiIsBqE5tKjERYF5D",
+        "_version": 1,
+        "result": "created",
+        "_shards": {
+          "total": 2,
+          "successful": 1,
+          "failed": 0
+        },
+        "_seq_no": 5,
+        "_primary_term": 1,
+        "status": 201
+      }
+    },
+    {
+      "create": {
+        "_index": "customer",
+        "_id": "jAyTiIsBqE5tKjERYF5D",
+        "_version": 1,
+        "result": "created",
+        "_shards": {
+          "total": 2,
+          "successful": 1,
+          "failed": 0
+        },
+        "_seq_no": 6,
+        "_primary_term": 1,
+        "status": 201
+      }
+    },
+    {
+      "create": {
+        "_index": "customer",
+        "_id": "jQyTiIsBqE5tKjERYF5D",
+        "_version": 1,
+        "result": "created",
+        "_shards": {
+          "total": 2,
+          "successful": 1,
+          "failed": 0
+        },
+        "_seq_no": 7,
+        "_primary_term": 1,
+        "status": 201
+      }
+    }]
+}
+```
+
+<img alt="kibana 실행화면" src="/static/images/project/project-kibana.png" width="900" />
+
+위 그림은 실행 화면,
+공식문서에 가면 GET, POST와 같은 HTTP Method를 테스트할 수 있는 예시 명령어가 있다.
+다음 포스팅에는 Spring boot 서버에서 Elasticsearch를 사용하는 방법을 소개하겠다.

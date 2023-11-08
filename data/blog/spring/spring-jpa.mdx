@@ -1,0 +1,119 @@
+---
+title: JPA를 사용해서 DB 테이블을 추상화하기
+date: 2023-11-07
+lastmod: 2023-11-07
+tags: ['java', ,'jpa', 'jdbc', 'spring']
+draft: false
+summary: 'JPA를 사용해서 DB 테이블을 추상화하기'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+이번 주 ASAC 과제는 [이커머스 ERD 설계와 구현](/blog/project/project-ecommerce)에서 작성한 ERD 다이어그램을 바탕으로 과제를 진행할 예정이다.
+이 [깃헙 레포지토리](https://github.com/haxr369/sol-coupang-restAPI)는 jdbc로 Dao를 작성한 쿠팡 api이다.
+
+## JPA 사용법
+
+Repository 밖에서 엔티티를 사용하면 안된다! 만약 엔티티가 바뀌면 엔티티에 맞는 API 전부를 바꿔야하고 보안상 엔티티의 필드가 보여지는 것이 좋지 않기 때문!
+버퍼처럼 DTO로 Entity를 한번 감싸주고 Conroller나 Serivce에선 DTO를 사용한다. DTO와 Entity의 변환을 위해 `toEntity`나 `fromEntity` 메서드 또는 연관 메서드를 사용하기도 한다.
+
+### N+1 문제
+
+[Hibernate N+1 Select 문제와 fetch join](/blog/spring/spring-jpa-np1)을 참고하면 N+1 문제를 Fetch Join 이나 Batch fetcing으로 대응할 수 있다.
+
+- `@ManyToOne(fetch = FetchType.LAZY)` `ProductOption`과 `Product`처럼 ManyToOne 관계에 있을 때 단순히 ProductOption 정보만 알고 싶다면 Product는 프록시 객체를 가져오고, 만약 ProductOption의 Product까지 사용한다면 그때 쿼리를 날려서 진짜 객체를 가져온다.
+  이런 방법을 **지연로딩**이라한다. ProductOption만 사용하면 좋지만, 둘 다 사용하면 쿼리를 두번 날리는 것이기 때문에 비효율적이다
+- `@ManyToOne(fetch = FetchType.EAGER)` Lazy 로딩의 문제를 해결하기 위한 한번에 조회해서 `ProductOption`과 `Product`를 전부 가져온다. 하지만 실무에선 엄청 많은 테이블이 있고 각각이 `ManyToOne`으로 연결되어 있기 때문에 즉시 로딩시 매우 많은 **JOIN**이 발생할 수 있다. 따라서 즉시 로딩은 JPQL에서 N+1 문제를 일으킨다.
+- 물론 Lazy로딩도 Product를 사용하려고 할 때 영속성 컨테스트를 확인하고 없으면 쿼리를 날려서 가져오기 때문에 N+1 문제가 생긴다.
+
+## Entity 클래스 만들기
+
+```java:ProductDto
+@Getter
+@Builder
+@AllArgsConstructor(access = AccessLevel.PROTECTED) // 생성자를 외부로부터 숨기고
+@NoArgsConstructor(access = AccessLevel.PROTECTED)  // 오직 팩토리 메소드만 사용해서 객체를 만들수 있다.
+public class ProductDto {
+    private Long productId;
+    private Long sellerId;
+    private LocalDate registrationDate;
+    private String productName;
+    private String countryOfManufacture;
+    private Long weight;
+    private String kcCertificationInformation;
+    private String manufacturer;
+    private String importer;
+    // 객체 생성을 캡슐화하는 정적 팩토리 메서드
+    public static ProductDto fromEntity(Product product){
+        return ProductDto.builder()
+                .productId(product.getProductId())
+                .sellerId(product.getSeller().getSellerId())
+                .registrationDate(product.getRegistrationDate())
+                .productName(product.getProductName())
+                .countryOfManufacture(product.getCountryOfManufacture())
+                .weight(product.getWeight())
+                .kcCertificationInformation(product.getKcCertificationInformation())
+                .manufacturer(product.getManufacturer())
+                .importer(product.getImporter())
+                .build();
+    }
+}
+```
+
+Entity를 만들고 위와 같이 생성자를 `(access = AccessLevel.PROTECTED)`로 감싸면 클래스 외부에서는 사용할 수 없게된다.
+객체를 생성할 때는 오직 정적 팩토리 메서드를 사용해서 생성할 수 있다. 위 Dto는 Entity를 입력하고 Dto를 출력해준다.
+위처럼 정적 팩토리 메서드를 사용해서 Dto를 만들 수 있고, 아래처럼 커스텀 생성자를 사용해서 객체를 생성할 수 있다.
+
+```java:SellerDto.java
+@NoArgsConstructor
+@Getter
+@Builder
+@AllArgsConstructor
+public class SellerDto {
+    private Long sellerId;
+    private String sellerName;
+    private String sellerPhoneNumber;
+    private String sellerAddress;
+    // 커스텀 생성자
+    public SellerDto(Seller seller){
+        this.sellerId = seller.getSellerId();
+        this.sellerName = seller.getSellerName();
+        this.sellerPhoneNumber = seller.getSellerPhoneNumber();
+        this.sellerAddress = seller.getSellerAddress();
+    }
+}
+```
+
+### OneToMany, ManyToOne
+
+Entity를 만들 때 `Product`와 `ProductOption`은 1대N 관계로 설정할 수 있다. 즉 OneToMany 어노테이션을 붙이고, List로 관리할 수 있다. 아래는 예시 코드를
+
+```java:one2many.java
+@Entity
+public class ProductOption {
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "fk_product")
+    private Product product;
+
+    ...
+}
+
+@Entity
+public class Product {
+
+    @OneToMany(mappedBy = "product")
+    private List<ProductOption> productOptions = new ArrayList<ProductOption>();
+
+    ...
+}
+```
+
+위 같이 OneToMany 와 ManyToOne을 양쪽에 사용하는 것은 문제되지 않는다. 다만, 문제되는 경우는 `OneToMany`를 양쪽에서 사용하는 경우다.
+
+<img src="/static/images/java/java-one-to-many.png" alt="다대다 관계" />
+
+위와 같은 경우에는 Entity 테이블로는 구현이 불가능하기 때문에 예측하지 못하는 새로운 테이블을 JPA가 생성할 수 있다. 그렇기 때문에 **Best Practice**에서는 사용을 지양하도록한다.
+다만 중간에 연관 테이블을 둬서 관계를 연결시켜줄 수 있다.

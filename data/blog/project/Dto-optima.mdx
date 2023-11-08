@@ -1,0 +1,130 @@
+---
+title: DTO를 통해 서비스 코드 최적화
+date: 2023-11-03
+tags: ['java', 'DTO', 'optimization', 'Spring', 'exception', 'jakson']
+draft: false
+summary: '서비스에는 비즈니스 로직에 집중할 수 있도록 포멧팅, 예외처리 같은 부분은 다른 곳으로 위임하기'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 개요
+
+여기어때 프로젝트를 하면서 작성한 코드가 예외처리로 복잡해졌다. 이를 해결하고 예외처리 역할을 분리하기 위해서 최적화하는 과정을 포스팅한다.
+아래 코드에서 `예정` 주석이 붙은 3가지 부분에 대해 최적화를 진행할 예정이다.
+
+```java:Service.java
+@Service
+@RequiredArgsConstructor
+public class ProductService {
+
+    private final ProductDao productDao;
+    private static final String DATE_FORMAT_REGEX = "\\d{4}-\\d{2}-\\d{2}";
+
+    public static boolean isDateFormatValid(String date) {
+        // Use a regular expression to check if the date matches the format "YYYY-MM-DD"
+        return Pattern.matches(DATE_FORMAT_REGEX, date);
+    }
+
+    public Page<Accommodation> GetProductWithCondition(String type, SearchReqDto searchReqDto, Pageable pageable){
+        AccommodationType accommoType = AccommodationType.from(type);
+        // -예정- enum 내부 예외 처리
+        if(accommoType ==null){
+            throw new BaseException(BaseResponseStatus.TYPE_NOT_FOUND);
+        }
+        // -예정- NotNull 추가 or 기본 값 주입
+        if(searchReqDto.getSel_date().isBlank()){ // 기준 날짜가 빈 경우
+            Date today = new Date();
+            SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd");
+            String result = df.format(today);
+            searchReqDto.setSel_date(result);
+
+            Calendar cal = Calendar.getInstance();
+            cal.setTime(today);
+            cal.add(Calendar.DATE, 1);
+            searchReqDto.setSel_date2(df.format(cal.getTime()));
+        }
+        // -예정- Date 포멧 확인
+        if(!(isDateFormatValid(searchReqDto.getSel_date()) && isDateFormatValid(searchReqDto.getSel_date2()))){
+            throw new BaseException(BaseResponseStatus.DATE_FORMAT_EXCEPTION);
+        }
+        List<Accommodation> accommodations = productDao.checkProduct(accommoType.getValue() ,searchReqDto);
+        int start = (int) pageable.getOffset();
+        int end = Math.min((start + pageable.getPageSize()), accommodations.size());
+        return new PageImpl<>(accommodations.subList(start, end), pageable, accommodations.size());
+    }
+}
+```
+
+문제들을 정리하자면 아래와 같다.
+
+1. enum 내부 예외 처리
+2. NotNull 추가 or 기본 값 주입
+3. Date 포멧 확인
+
+## enum 내부 예외 처리
+
+AccommodationType은 enum type으로 아래와 같이 `from` 메소드를 통해 String 에서 enum type으로 변환할 수 있다.
+아래처럼 `null`을 출력하게 된다면 enum 메서드 밖에서 `null`처리를 해야한다.
+
+```java:AccommodationType.java
+@JsonCreator
+    public static AccommodationType from(String type) throws BaseException {
+        for (AccommodationType t : AccommodationType.values()) {
+            if (t.getType().equals(type)) {
+                return t;
+            }
+        }
+        return null;
+    }
+```
+
+아래와 같이 enum 내부에서 Exception을 던진다면 밖에서 `null`을 처리할 필요가 없어지기 때문에 1번 문제를 해결한다.
+enumt type에서 코드 1줄 바꾼것이 서비스에서 여러 줄을 제거할 수 있으니 좋은 최적화라고 생각한다.
+
+## 기본 값 주입 or NotNull 추가
+
+단순히 필드에 NotNull을 추가하면 프론트에게 이 일을 떠넘길 수 있다. 하지만 프론트의 일을 백도 할 수 있어야하기 때문에 여기선 기본 값 주입에 대해 작성한다.
+
+기본 값 주입 방법은 정말 많지만 여기서는 `@RequestBody`로 들어온 json을 DTO 객체로 디시리얼라이즈 할 때 기본값을 주입하려고 한다.
+[어노테이션](/blog/spring/spring-annortation#lombok) 포스팅을 참고하면 디시리얼라이즌는 `@NoArgumentConstruct`를 통해 기본 생성자가 있어야한다.
+
+그렇다면 커스텀 기본 생성자를 만들어서 기본 값을 넣고 사용할 수 있다.
+
+```java:SearchReqDto.java
+@Getter
+@ToString
+public class SearchReqDto {
+    private String region;
+    private String sort;
+//    @FormattedLocalDate
+//    private LocalDate sel_date;
+    @DateTimeFormat(pattern = "yyyy-MM-dd")
+    private LocalDate sel_date;
+    @DateTimeFormat(pattern = "yyyy-MM-dd")
+    private LocalDate sel_date2;
+    private Integer min_price; // 기본값을 0L로 설정
+    private Integer max_price;
+    private List<Integer> keywords;
+    public SearchReqDto(){ // 기본 생성자
+        sel_date = LocalDate.now(); // 오늘 날짜 입력
+        sel_date2 = LocalDate.now().plusDays(1); // 내일 날짜 입력
+        min_price = 0;
+        max_price = 10000000;
+    }
+}
+```
+
+```
+// 값을 전부 입력했을 때
+type : HOTEL region : 서울 SelDate : 2023-10-06 maxPrice : 100000
+// sel_date를 입력하지 않았을 때
+type : HOTEL region : 서울 SelDate : 2023-11-03 maxPrice : 1000000
+// max_price를 입력하지 않았을 때
+type : HOTEL region : 서울 SelDate : 2023-11-03 maxPrice : 10000000
+```
+
+컨트롤러에 `log`를 찍어서 옳바르게 기본 값이 입력되는 것을 확인했다. 이로써 기본 값 입력 로직을 `Service` 코드에 제거할 수 있게 됐다.
+2번 문제 해결!! LocalDate를 통해 3번 문제도 해결했다.

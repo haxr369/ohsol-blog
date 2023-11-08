@@ -1,8 +1,7 @@
 ---
 title: AWS Route 53 정리
-date: 2023-10-28
-lastmod: 2023-10-28
-tags: ['AWS', 'dns', 'route-53', 'DVA-C02']
+date: 2023-10-29
+tags: ['AWS', 'dns', 'route-53', 'DVA-C02', 'CNAME', 'Alias', 'TTL', 'recode']
 draft: false
 summary: 'AWS의 DNS 서비스인 Route 53에 대해 정리한다.'
 ---
@@ -124,25 +123,55 @@ Route53의 라우팅 정책은 다음과 같다.
   - 트래픽을 단일 리소스로 보내는 방식. Alias를 사용하면 오직 한 AWS 서비스로만 설정 가능
   - IP와 도메인 이름을 N 대 1 맵핑
   - 클라이언트가 IP를 여러개 받으면 아무거나 고른다.
-- Weighted
+- Weighted (가중치 기반 규칙)
   - 요청의 일부를 특정 리소스로 보낼 수 있다. 각 레코드로 보내지는 트래픽의 비율은 `모든 레코드의 가중치`로 `특정 레코드의 가중치`를 나눈 값이다. 그래서 합이 100이 아닐 수 있다. 또한 특정 레코드의 가중치가 0이면 그 레코드론 라우팅하지 않고, 전부 0이 되면 동일한 가중치로 전부 보낸다.
   - DNS 레코드들은 동일한 이름과 유형을 가져야한다. 이렇게 동일 이름, 유형을 가진 여러 레코드를 만들고 각 가중치마다 라우팅을 분산한다.
   - 다른 지역의 로드밸런서들을 사용하거나 새로운 애플리케이션을 적은 트래픽으로 테스트하는 경우에 사용한다.
-- Failover
+- Failover (장애 조치 규칙)
   - Primary EC2와 Secondary EC2(재해 복구용)이 있을 때, Route 53은 Primary EC2에 Health Check를 의무적으로 한다.
   - 재해가 일어나면 자동으로 Secondary EC2로 장애조치하며 결과를 보낸다. 이때 Primary와 Secondary는 1대1로 짝지어진다.
   - 클라이언트가 DNS 쿼리를 Route53에 날리면 정상으로 판단되는 리소스를 보내준다.
-- Latency based
+- Latency based (지연 규칙)
   - 지연 시간이 가장 짧은, 가장 가까운 리소스로 리다이렉팅하는 정책
   - 지연 시간은 유저와 AWS region 사이 트래픽이 걸리는 시간을 기반으로 측정. 예를들어 독일 유저와 미국 리전 사이가 가장 가깝다면 미국 리전으로 리다이렉트된다.
   - 마치 CDN처럼 유저와 가까운 리소스로 Route53이 리다이렉팅해준다.
-- Geolocation
+- Geolocation (지리 위치 규칙)
   - Latency based와 달리 사용자의 실제 위치를 기반으로 라우팅한다.
   - 위치에 맞는 레코드가 없을 수 있기에 기본 레코드를 생성해야한다.
   - 콘텐츠 분산, 웹 사이트 로컬라이즈, 로드 밸런싱 등이 있다.
   - Latency based로 하면 한국인데 일본이 더 가까우면 일본 리소스로 라우팅될 수 있기에 로컬라이즈가 중요하면 좋은 정책이다.
-- Multi-Value Answer
-- Geoproximity (using Route 53 Traffic Flow feature)
+- Multi-Value Answer (다중 응답 규칙)
+  - Rotue 53은 다중 값과 정상상태의 다중 리소스를 응답한다.
+  - 한 다중 값 쿼리에 최대 8개의 정상 레코드가 반환된다.
+  - 클라이언트 측면의 로드 밸런싱이다. 여러 리소스로 라우팅하는데 ELB와 유사해보이지만 ELB를 대체할 수 없다.
+  - 다중 값 응답 규칙에서 제공하는 리소스는 정상상태임을 보장하지만, Simple(단순 라우팅 정책)에서 제공하는 리소스는 상태 검사를 안하기 때문에 비정상일 수 있다.
+- Geoproximity (지리 근접 규칙) (using Route 53 Traffic Flow feature)
+  - 리소스와 사용자의 지리적 위치를 기반으로 트래픽을 라우팅
+  - 편향(bias가 양수면 터 많은 트래픽 라우팅, 음수면 더 적게)에 따라 리소스가 커버하는 범위가 결정된다.
+  - 리소스가 AWS 서비스라면 Region을 지정(자동으로 라우팅), 프라이빗 온프레미스 데이터 센터라면 위도와 경도를 지정해서 AWS가 리소스의 위치를 알도록해야한다.
+- IP-based Routing
+  - 클라이언트 IP 주소 기반으로 라우팅 정의
+  - Route53에서 CIDR 목록을 지정하는데 이는 클라이언트의 IP 범위다. IP에 따라 어느 지역으로 라우팅할지 정할 수 있다.
+  - 예를 들어 특정 ISP(인터넷 제공자)의 IP 범위를 알면 특정 엔드포인트로 라우팅할 수 있다.
+  - 레코드에는 범위에 따라
+
+**근접 라우팅 정책**
+
+<div className="-mx-2 flex flex-wrap overflow-hidden">
+  <div className="my-1 w-full overflow-hidden px-2 md:my-1 md:w-1/2 md:px-2">
+    ![근접 라우팅 정책1](/static/images/aws/aws-route53-geoproximity1.png)
+  </div>
+  <div className="my-1 w-full overflow-hidden px-2 md:my-1 md:w-1/2 md:px-2">
+    ![근접 라우팅 정책2](/static/images/aws/aws-route53-geoproximity2.png)
+  </div>
+</div>
+
+Geoproximity 정책은 여러 리소스가 있을 때 Bias를 기준으로 더 넓은 범위를 커버하고 그 범위 안에서 발생하는 트래픽을 라우팅한다.
+특정 지역의 리소스가 다른 지역의 리소스를 받게하고 싶을 때 사용한다.
+
+**IP 기반 라우팅**
+
+<img alt="ip 기반 라우팅" src="/static/images/aws/aws-route53-ipbased.png" width="500" />
 
 ## Route53 상태 검사
 
@@ -176,3 +205,30 @@ Simple 정책은 단순한 맵핑이라서 상태 검사 없이 유저에게 단
 
 모든 Route 53의 Health Checker는 공용 웹에 있기 때문에 VPC에 있는 리소스를 접근할 수 없다. 그래서 CloudWatch 지표를 연결시켜서 CloudWatch 경보를 Route53 상태 확인에 할당할 수 있다.
 VPC 내부 인스턴스를 CloudWatch로 모니터하고 지표에 문제 생기면 CloudWatch 알람을 생성한다. 상태 확인은 알람을 보고 Route 53은 해당 인스턴스에 라우팅을 멈춘다.
+
+## Route 53 Traffic Flow
+
+Geoproximity(지리 근접성) 뿐만 아니라 모든 것에 적용된다. 복잡한 라우팅 의사 결정 트리를 관리한다.
+DNS 관리 정책을 인라인트로 관리하지 않고 UI로 편하게 관리할 수 있다.
+**Traffic Flow Policy**로 관리되는 설정은 버전을 지정하고 호스팅 영역을 적용할 수 있다.
+
+<img alt="traffic flow 실험" src="/static/images/aws/aws-route53-traffic-flow.png" />
+
+위 그림처렁 Traffic Flow Policy를 통해 UI 상에서 복잡한 정책들을 설정하고 연결할 수 있다.
+Geoproximity(지리 근접 규칙)은 **리전**을 선택하는데 사용자 지정(위도, 경도 입력)이나 AWS Region을 설정할 수 있다.
+그리고 Bias를 통해 특정 리소스의 범위를 더 넓힐 수 있다.
+
+정책을 다 생성하면 호스트 영역(`api.epicktrees.net`)으로 배포해야하고 정책 레코드 이름을 작성해야한다.
+유료라서 때문에 프리티어로만 진행하면 불가능하다. 버전 관리를 할 수 있기 때문에 새로운 버전의 Traffic Flow Policy를 생성해서 적용할 수 있다.
+
+## Domain Registar vs DNS Service
+
+Domain Registar를 통해 도메인 이름을 구매할 수 있다. (매년 비용 발생) 지금까지는 Route 53 콘솔을 통한 Amazon Registar를 이용했다.
+다른 Domain Registar를 이용해도 괜찮다. DNS 레코드를 관리하는 것은 도메인을 등록하는 것과 별개의 서비스기 때문에 GoDaddy를 통해 `example.com` 도메인을 구매하고 Amazon Route53을 통해 DNS 레코드를 관리하는 것은 좋은 사용법이다.
+
+사용방법은 AWS에서 공용 호스팅 영역을 생성하고 그 상세 페이지에서 Name servers를 확인한다. GoDaddy에서 Nameservers 설정에 route53의 Name servers를 작성한다.
+이러면 GoDaddy가 쿼리에 응답하면 Name Server가 Amazon Route53의 Name server를 가리키고 Route53이 모든 DNS recode를 관리할 수 있게된다. 정리하면 다음과 같다.
+
+1. 타사에서 도메인
+1. Route 53에서 공용 호스팅 영역을 생성
+1. 도메인을 구해한 타사 웹사이트에서 Name server를 Route 53의 Name server(NS)로 업데이트

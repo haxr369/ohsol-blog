@@ -1,0 +1,50 @@
+---
+title: JDBC 개념 정리
+date: '2023-10-19'
+lastmod: '2023-10-31'
+tags: ['java', 'db', 'jdbc-template', 'jdbc']
+draft: false
+summary: 'Java 애플리케이션이 어떻게 DBMS와 transaction할 수 있고, 이를 어떤 구조로 연결되어있을까?'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## JDBC의 위치와 WAS와 DB가 연결되는 구조
+
+<img alt="db와 was까지 연결하는 구조" src="/static/images/db/db-jdbc-structure.png" />
+
+JDBC 드라이버는 JDBC 인터페이스를 구현한 구현체이며, 위 그림의 DB와 드라이버의 색이 동일한 것처럼 DB에 맞는 JDBC 드라이버가 필요하고, 모든 JDBC 드라이버를 관리하는 것을 드라이버 매니저라고한다.
+
+드라이버 매니저는 드라이버를 사용해서 DB와 연결을 획득하고 연결을 통해서 SQL 명령어를 요청하고 응답받을 수 있다.
+
+## 애플리케이션 - DB 연결
+
+- DBMS에 맞는 JDBC Driver
+  가장 첫번째로 DBMS와 연결. Connection Pool에서 Thread로 만든 Connection을 할당 받고 DB에 쿼리를 보내거나 응답 받는다.
+- JDBC Connection Pool
+  미리 만들어둔 여러 Thread를 Connection Pool에 생성해두고 Driver가 요청할 때마다 Connection을 제공.
+  애플리케이션의 연결이 끝나면 Connection을 반환받는다.
+- JDBC APIs
+  JDBC는 DB 접속, 결과에 대한 명세(API) 제공, 결과를 DAO에 맵핑한다.
+  JDBC APIs는 Connection 객체로 DB 접속(JDBC Driver를 통해 획득한 connection)객체, Statement 객체, ResultSet 객체(DB 쿼리에 결과)를 가진다.
+  Statement는 두가지 방식으로 쿼리를 만들수 있는데, 첫번째로 Stirng Concate nating이고, 두번째는 Prepared Statement이다.
+  Concate nating 방식은 SQL 인젝션의 위험이 있고 캐싱할 수 없이 매 쿼리를 전부 DB에 요청한다.
+  하지만, **Prepared Statement** 방식은 내부적으로 이스케이핑 수행 후 값을 주입하기 때문에 SQL인젝션 방어가 가능하고 Statement 기반이기 때문에 쿼리 플랜을 캐싱할 수 있어 더 좋은 성능을 가진다.
+- JDBC Tempalte
+  JDBC APIs에는 쿼리 입력 말고도 DB 연결을 위한 try-catch-final 구문, SQL 예외처리, 그리고 transaction을 생각해야하늗데 JDBC Template은 쿼리 입력과 결과 값을 객체로 맵핑하는 RowMapper만 생각하면 되기 때문에
+  훨씬 간단하게 작성할 수 있다.
+
+## connection pool
+
+드라이버가 SQL 명령을 DB에 요청하기위해 연결을 매번 획득하는데는 오버헤드가 발생하기 때문에 이를 방지하고자 connection pool을 사용하여 리소스를 효율적으로 사용할 수 있다.
+connection pool은 미리 만들어둔 연결들을 모아둔 저장소고, 데이터 소스가 이를 제공한다.
+
+애플리케이션은 직접 DB에 연결을 요청하지 않고 JNDI Lookup을 통해 DB와 연결되 데이터 소스의 연결을 요청한다.
+연결을 요청 받은 데이터소스는 connection pool에서 연결을 꺼내서 응답한다. 애플리케이션이 연결을 다 사용하면, 데이터 소스는 연결을 회수해서 이후에 재사용할 수 있도록 connection pool에 넣어 관리한다.
+
+당연하게 DB와 애플리케이션 사이의 연결은 메모리가 필요한 작업이고 여러개를 동시에 사용하면 DB 서버에 부하가 많이 발생할 수 있다. 이를 방지하기 위해 connection 수를 적절하게 설정할 수 있다.
+
+Java app은 RowMapper로 테이블 형태의 쿼리 응답을 객체에 맵핑할 수 있고, 이는 ORM의 원시적인 형태라고 할 수 있다.
+더 진보한 Java 표준 ORM인 JPA는 다음 포스팅에 작성하겠다.

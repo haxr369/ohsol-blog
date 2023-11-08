@@ -1,0 +1,147 @@
+---
+title: '@ModelAttribute의 바인딩 문제 '
+date: 2023-11-08
+lastmod: 2023-11-08
+tags: ['java', 'ModelAttribute', 'spring', 'dto']
+draft: false
+summary: '공식 문설르 바탕으로 Spring MVC의 @ModelAttribute을 이용한 데이터 바인딩에서 dto에 setter가 필요한 이유'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 결론
+
+`@ModelAttribute`가 바인딩을하는 프로세서 구현체는 기본 생성자(생성자의 파라미터가 없는 경우)가 확인되면 먼저 객체를 생성하고 `setter`를 통해 바인딩을 시도한다.
+DTO는 아무런 생성자 선언을 하지 않으면 기본 생성자를 사용하기 때문에 `Setter`가 있어야 정상적인 바인딩이 가능하다.
+
+하지만 `@AllArgsConstructor`나 `커스텀 생성자`를 사용하면 setter 없이 생성자를 통해 쿼리 파라미터를 바인딩할 수 있다. 특히 `커스텀 생성자`를 사용하면 쿼리 파라미터에 DTO 필드 값이 없더라도 null을 저장하지 않고 기본 값을 정할 수 있다.
+
+## 문제 상황
+
+```java:controller.java
+// 조건 검색을 위한 메서드
+@GetMapping(value = "/search/{type}")
+public Page<AccommodationResDto> getReq(@PathVariable("type") String type,
+                                            @ModelAttribute SearchReqDto searchReqDto,
+                                        @PageableDefault(size=10, direction = Sort.Direction.DESC) Pageable pageable) {
+
+    log.info("type : "+type+" region : "+searchReqDto.getRegion()+" SelDate : "+searchReqDto.getSel_date()+" maxPrice : " + searchReqDto.getMax_price());
+    return productService.getProductWithCondition(type, searchReqDto, pageable);
+}
+```
+
+위 코드와 같이 SearchReqDto를 @ModelAttribute로 바인딩해서 사용하려고 했다. SearchReqDto는 아래와 같다.
+
+```java:SearchReqDto.java
+@Getter
+@ToString
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+public class SearchReqDto {
+    private String region="서울";
+    private String sort = "DESC";
+//    @FormattedLocalDate
+//    private LocalDate sel_date;
+    @DateTimeFormat(pattern = "yyyy-MM-dd")
+    private LocalDate sel_date = LocalDate.now();
+    @DateTimeFormat(pattern = "yyyy-MM-dd")
+    private LocalDate sel_date2 = LocalDate.now();
+    private Integer min_price = 0; // 기본값을 0L로 설정
+    private Integer max_price = 10000000;
+    private List<Integer> keywords = new ArrayList<>();
+}
+```
+
+위와 같은 코드를 바탕으로 아래처럼 `GET` 요청을 보냈지만, 정작 log에서 region은 서울로 찍힌다.
+즉 쿼리 파라미터 입력 값이 바인딩되지 않고, 기본 값을 그대로 사용해서 DTO 객체가 생성된 것이다.
+
+```
+http://localhost:8080/api/v2/product/search/HOTEL?sel_date=2023-11-08&sel_date2=2023-11-08&min_price=0&max_price=500000&keywords=1
+```
+
+## ModelAttribute가 바인딩하는 과정
+
+`model attribute`는 HTTP Servlet request 파라미터의 이름과 동일한 DTO의 속성에 덮어씌운다. 이 과정을 `binding`이라하고 쿼리 파라미터의 값을 다루는 방법이다.
+
+`@ModelAttribute`가 바인딩하는 과정은 다음과 같다.
+
+1. **모델**에서 가져옴.
+   이전 컨트롤러에서 DTO 객체를 모델에 추가했을 수 있기 때문에 **model** 확인
+2. **세션**에서 가져옴.
+   `@SessionAttributes` 어노테이션으로 클래스 수준으로 지정된 속성 중 하나인지 확인하고 세션에서 가져옴
+3. **컨버터**를 사용하여 가져옴.
+   request value의 이름과 맞는 속성을 변환하여 가져옴
+4. **기본 생성자**를 사용하여 인스턴스화.
+   (이번 포스팅의 결론) 기본 생성자에 `setter`를 이용해서 바인딩
+5. **주 생성자**를 사용하여 인스턴스화.
+   클래스가 매개변수와 일치하는 주 생성자를 가질 경우 request value와 맞는 값을 사용하여 인스턴스화
+
+```java:ModelAttributeMethodProcessor.java
+protected Object constructAttribute(Constructor<?> ctor, String attributeName, MethodParameter parameter,
+			WebDataBinderFactory binderFactory, NativeWebRequest webRequest) throws Exception {
+
+		if (ctor.getParameterCount() == 0) {
+			// A single default constructor -> clearly a standard JavaBeans arrangement.
+			return BeanUtils.instantiateClass(ctor);
+		}
+
+		// A single data class constructor -> resolve constructor arguments from request parameters.
+		String[] paramNames = BeanUtils.getParameterNames(ctor);
+		Class<?>[] paramTypes = ctor.getParameterTypes();
+		Object[] args = new Object[paramTypes.length];
+		WebDataBinder binder = binderFactory.createBinder(webRequest,
+    ...
+```
+
+`ModelAttributeMethodProcessor` 어떻게 보면 컨버터 역할을 한다고 할 수 있다. 하지만 기본 생성자를 사용할 경우 setter를 이용해서 바인딩하는 것을 알 수 있다.
+그러므로 `@Setter` 어노테이션을 추가했고, 결과적으로 성공했다.
+
+## setter를 꼭 사용해야할까?
+
+Setter는 너무 편리한 도구이지만, 잘못 사용되면 알 수 없는 곳에서 DTO 객체가 변현될 수 있다. 그렇기에 Setter를 되도록 사용을 자제하는 것이 좋다.
+하지만 바인딩을 위해선 생성자가 필요하다.
+
+첫번째 방법은 `@AllArgumentConstructor`를 사용하는 것이다. 파라미터 수가 0이 아니기 때문에 setter를 통해 바인딩하지 않고, 쿼리 파라미터의 값을 생성자의 파라미터로 입력해줄 수 있다.
+
+```
+@Getter
+@ToString
+//@Setter
+//@NoArgsConstructor(access = AccessLevel.PROTECTED)
+@AllArgsConstructor
+```
+
+두번째 방법은 커스텀 생성자를 사용하는 것이다. `@AllArgsConstructor`를 사용하면, 쿼리 파라미터로 입력하지 않음 값은 `null`로 처리되어 추후 로직에 방해가 될 수 있다.
+그리고 기본 값을 입력해주고 싶을 때는 별다른 방법이 없게된다. 이때는 기본 값을 필드에 지정하고 커스텀 생성자를 사용하면 null이 들어와도 기본 값을 사용할 수 있게된다.
+또한 `private`을 통해서 오직 바인딩될 때 한번 생성자를 사용해서 이후로는 바꿀 수 없는 VO처럼 사용할 수도 있다.
+
+```java:SearchReqDto.java
+@Getter
+@ToString
+//@Setter
+//@NoArgsConstructor(access = AccessLevel.PRIVATE)
+public class SearchReqDto {
+    private String region="서울";
+    private String sort = "DESC";
+//    @FormattedLocalDate
+//    private LocalDate sel_date;
+    @DateTimeFormat(pattern = "yyyy-MM-dd")
+    private LocalDate sel_date = LocalDate.now();
+    @DateTimeFormat(pattern = "yyyy-MM-dd")
+    private LocalDate sel_date2 = LocalDate.now();
+    private Integer min_price = 0; // 기본값을 0L로 설정
+    private Integer max_price = 10000000;
+    private List<Integer> keywords = new ArrayList<>();
+
+    private SearchReqDto (String region, String sort, LocalDate sel_date, LocalDate sel_date2, Integer min_price, Integer max_price, List<Integer> keywords){
+        if (region != null) {this.region = region;}
+        if (sort != null) {this.sort = sort;}
+        if (sel_date != null) {this.sel_date = sel_date;}
+        if (sel_date2 != null) {this.sel_date2 = sel_date2;}
+        if (min_price != null) {this.min_price = min_price;}
+        if (max_price != null) {this.max_price = max_price;}
+        if (keywords != null) {this.keywords = keywords;}
+    }
+}
+```

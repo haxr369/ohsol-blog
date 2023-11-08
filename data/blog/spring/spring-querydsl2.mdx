@@ -1,0 +1,222 @@
+---
+title: 복잡한 쿼리를 QueryDSL로 바꾸기 (2)
+date: 2023-11-08
+lastmod: 2023-11-08
+tags: ['java', 'querydsl', 'jpa', 'spring']
+draft: false
+summary: '이미 만들어둔 jdbc tempalte을 QueryDSL로 마이그래이션'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+이번 포스팅에서는 QueryDSL의 사용법을 익히고 여기어때 프로젝트에 사용된 [복잡한 조건 검색 API](/blog/project/jdbc-queries)의 MySQL 네비티브 쿼리를 QueryDSL로 변환하는 과정을 진행한다.
+QueryDSL의 설정과 기본 문법은 [복잡한 쿼리를 QueryDSL로 바꾸기 (1)](/blog/spring/spring-querydsl)을 참고하자
+
+## 문제 상황
+
+아래는 이번에 바꿀 jdbc template과 그 쿼리이다.
+
+```java:ProductDao.java
+public List<AccommodationResDto> checkProduct(String type, SearchReqDto searchReqDto) {
+    // jdbc 쿼리 작성 요령 중간에 if문 때문에 문제가 생기는듯!
+    // createParameterPlaceholders에 ?를 붙여놓고 값을 입력하지 않았다.
+    String BaseQuery = "SELECT a.* FROM accommodation a " +
+            "LEFT JOIN accommodation_keyword ak ON a.accommodation_id = ak.accommodation_id " +
+            "WHERE a.type = ? " +
+            "AND a.region = ? ";
+    if(!searchReqDto.getKeywords().isEmpty()){
+        String keywordPlaceholders = createParameterPlaceholders(searchReqDto.getKeywords());
+        BaseQuery += " AND keyword_id IN (" + keywordPlaceholders + ") ";
+        }
+
+    BaseQuery += "GROUP BY a.accommodation_id " +
+            "HAVING COUNT(DISTINCT keyword_id) >= ? " +
+            "AND a.price BETWEEN ? AND ? " +
+            "AND a.accommodation_id NOT IN (" +
+            "SELECT accommodation_id FROM reserve " +
+            "WHERE NOT (DATE_FORMAT(reserve_date, '%Y-%m-%d') >= ? " +
+            "AND DATE_FORMAT(end_date, '%Y-%m-%d') <= ?));";
+    // ... 생략
+```
+
+이 쿼리의 재미있는 점은 `keywords`가 null인 경우 분기가 일어나서 쿼리 내용이 동적으로 바뀌는 것이다.
+QueryDSL은 다행이도 이런 동적 쿼리는 [이전 포스팅](/blog/spring/spring-querydsl)을 참고하면 `다중 where`절을 사용하면 쉽게 풀 수 있다.
+
+## 적용
+
+필요한 조건 나열하기
+
+1. type
+2. region
+3. keywords
+4. min_price, max_price
+5. sel_date2
+6. sel_date
+
+복잡한 join과 동적 where 문 적용을 하면 아래와 같이 작성할 수 있다.
+
+```java:QueryDSL1.java
+@RequiredArgsConstructor
+@Slf4j
+class AccommodationCustomImpl implements AccommodationCustom{
+    private final JPAQueryFactory jpaQueryFactory;
+    private BooleanExpression typeEq(String type){
+        return type != null ? accommodation.type.eq(AccommodationType.valueOf(type)) : null;
+    }
+    private BooleanExpression regionEq(String region){
+        return region != null ? accommodation.region.eq(region) : null;
+    }
+    private BooleanExpression keywordContain(List<Integer> keywords){
+        log.info(keywords.toString());
+        if(keywords != null && !keywords.isEmpty()){
+            List<Long> longs = keywords.stream().map(Long::valueOf).toList();
+            return accommodationKeyword.keywordId.keywordId.in(longs);
+        } else{return null;}// null 인 경우 항상 true로 설정
+    }
+    @Override
+    public List<AccommodationResDto> findByConditions(String type, SearchReqDto searchReqDto, Pageable pageable) {
+
+        List<Accommodation> contents =  jpaQueryFactory.select(accommodation)
+                .from(accommodation)
+                .join(accommodation.accommodationKeywords, accommodationKeyword).fetchJoin()
+                .join(accommodationKeyword.keywordId, keyword).fetchJoin()
+                .where(typeEq(type),
+                        regionEq(searchReqDto.getRegion()),
+                        keywordContain(searchReqDto.getKeywords()))
+                .fetch();
+        List<AccommodationResDto> accommodationResDtos = contents.stream()
+                                                        .map(AccommodationResDto::fromEntity)
+                                                        .toList();
+        return accommodationResDtos;
+    }
+}
+```
+
+아래 그림처럼 3가지 테이블이 연관관계를 맺고 있기 때문에 `accommodation` 테이블에 `accommodationKeyword`와 `keyword`를 Join 했다.
+또한 일반적인 Join을 하게되면 Lazy fetch로 인해 1+N 문제가 발생하기 때문에 `fetchJoin`을 적용했다.
+
+<img src="/static/images/spring/spring-table-relation.png" alt="숙소 테이블과 연관된 테이블" />
+
+## 주의할 점
+
+`groupBy`은 기본적으로 `only_full_group_by` 모드를 사용하기 때문에 SQL 쿼리에서 row에 대한 집계 함수나 그룹화되지 않는 열을 반환할 때 아래와 같은 에러를 발생시킨다.
+
+```
+java.sql.SQLSyntaxErrorException: Expression #3 of SELECT list is not in GROUP BY clause and contains nonaggregated column
+'myseconddb.a2_0.accommodation_keyword_id' which is not functionally dependent on columns in GROUP BY clause;
+this is incompatible with sql_mode=only_full_group_by
+...
+```
+
+서브 쿼리를 `JPAExpressions`로 묶어서 표현하는 것과 Hibernate의 제약 사항 중 하나로 서브 쿼리 안에는 `fetchJoin`을 적용할 수 없다. Hibernate 자체적으로 서브쿼리 결과를 최적화해서 가져오도록 하는데 `fetchJoin` 때문에 최적화가 방해 받을 수 있기 때문이다.
+무시하고 `fetchJoin`을 사용하면 아래와 같은 에러가 발생한다.
+
+```
+org.hibernate.query.SemanticException: fetch not allowed in subquery from-elements
+at org.hibernate.query.hql.internal.SemanticQueryBuilder.consumeJoin(SemanticQueryBuilder.java:2177) ~[hibernate-core-6.2.7.Final.jar:6.2.7.Final]
+...
+```
+
+QueryDSL은 spring data jpa처럼 `Page`를 지원하진 않지만, `offset`과 `limit`을 이용해서 필요한 부분만 가져오는 쿼리를 작성할 수 있다.
+
+## 결론
+
+4가지 주의사항과 모든 필요 조건을 적용한 QueryDSL 코드는 아래와 같다.
+
+```java:AccommodationRepository.java
+interface AccommodationCustom { // QueryDSL은 빈에 자동 등록!!
+    Page<AccommodationResDto> findByConditions(String type, SearchReqDto searchReqDto, Pageable pageable);
+}
+@RequiredArgsConstructor
+class AccommodationCustomImpl implements AccommodationCustom{
+    private final JPAQueryFactory jpaQueryFactory;
+    private BooleanExpression typeEq(String type){
+        return type != null ? accommodation.type.eq(AccommodationType.valueOf(type)) : null;
+    }
+    private BooleanExpression regionEq(String region){
+        return region != null ? accommodation.region.eq(region) : null;
+    }
+    private BooleanExpression keywordContain(List<Integer> keywords){
+        if(keywords != null && !keywords.isEmpty()){
+            List<Long> longs = keywords.stream().map(Long::valueOf).toList();
+            return accommodationKeyword.keywordId.keywordId.in(longs);
+        } else{return null;}// null 인 경우 항상 true로 설정
+    }
+    private BooleanExpression priceBetween(Integer minPrice, Integer maxPrice){
+        return accommodation.price.between(minPrice, maxPrice);
+    }
+    private BooleanExpression reserveUnable(LocalDate selDate, LocalDate selDate2){
+       Date hopeStart = Date.valueOf(selDate); // 예약
+        Date hopeEnd = Date.valueOf(selDate2);
+       return reserve.reserveDate.loe(hopeEnd).and(reserve.endDate.goe(hopeStart));
+    }
+    @Override
+    public Page<AccommodationResDto> findByConditions(String type, SearchReqDto searchReqDto, Pageable pageable) {
+        List<Accommodation> contents =  jpaQueryFactory.select(accommodation)
+                .from(accommodation)
+                .where(typeEq(type),
+                        regionEq(searchReqDto.getRegion()),
+                        priceBetween(searchReqDto.getMin_price(), searchReqDto.getMax_price()),
+                        accommodation.accommodationId.in( // keyword를 모두 포함하는 숙소만 표기
+                                JPAExpressions
+                                        .select(accommodation.accommodationId)
+                                        .from(accommodation)
+                                        .join(accommodation.accommodationKeywords, accommodationKeyword)
+                                        .join(accommodationKeyword.keywordId, keyword)
+                                        .where(keywordContain(searchReqDto.getKeywords()))
+                                        .groupBy(accommodation.accommodationId)
+                                        .having(accommodation.accommodationId.count().goe(searchReqDto.getKeywords().size()))),
+                        accommodation.accommodationId.notIn( // 예약 불가인 숙소는 표기 X
+                                JPAExpressions
+                                        .select(reserve.accommodationId.accommodationId)
+                                        .from(reserve)
+                                        .where(reserveUnable(searchReqDto.getSel_date(), searchReqDto.getSel_date2()))))
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .fetch();
+
+        Long totalCount = jpaQueryFactory.select(accommodation.count())
+                .from(accommodation)
+                .where(typeEq(type),
+                        regionEq(searchReqDto.getRegion()),
+                        priceBetween(searchReqDto.getMin_price(), searchReqDto.getMax_price()),
+                        accommodation.accommodationId.in( // keyword를 모두 포함하는 숙소만 표기
+                                JPAExpressions
+                                        .select(accommodation.accommodationId)
+                                        .from(accommodation)
+                                        .join(accommodation.accommodationKeywords, accommodationKeyword)
+                                        .join(accommodationKeyword.keywordId, keyword)
+                                        .where(keywordContain(searchReqDto.getKeywords()))
+                                        .groupBy(accommodation.accommodationId)
+                                        .having(accommodation.accommodationId.count().goe(searchReqDto.getKeywords().size()))),
+                        accommodation.accommodationId.notIn( // 예약 불가인 숙소는 표기 X
+                                JPAExpressions
+                                        .select(reserve.accommodationId.accommodationId)
+                                        .from(reserve)
+                                        .where(reserveUnable(searchReqDto.getSel_date(), searchReqDto.getSel_date2()))))
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize())
+                .fetchOne();
+
+        List<AccommodationResDto> accommodationResDtos = contents.stream()
+                                                        .map(AccommodationResDto::fromEntity)
+                                                        .toList();
+        if(totalCount != null){
+            return new PageImpl<>(accommodationResDtos, pageable, totalCount);
+        }
+        else{
+            return null;
+        }
+    }
+}
+
+public interface AccommodationRepository extends JpaRepository<Accommodation, Long>, AccommodationCustom {
+}
+```
+
+QueryDSL을 위한 인터페이스를 설정한 이윤느 spring data jpa와 함께 사용할 수 있게하기 위함이다.
+class 명 맨 뒤에 `Impl`을 붙이면 QueryDSL 빈이 자동으로 등록되고 의존 관계 역전을 이용해서 AccommodationRepository가 findByConditions 메서드의 구현체를 사용할 수 있다.
+
+<img src="/static/images/spring/spring-querydsl-struct.png" alt="인터페이스 관계" />

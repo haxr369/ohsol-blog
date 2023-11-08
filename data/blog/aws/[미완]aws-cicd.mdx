@@ -1,0 +1,112 @@
+---
+title: AWS CICD 방법 (1)
+date: 2023-11-07
+lastmod: 2023-11-07
+tags: ['AWS', 'codecommit', 'codepipeline', 'codebuild', 'codedeploy', 'DVA-C02']
+draft: false
+summary: 'AWS CICD 서비스 정리와 CodeDeploy 실습 (1)'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+AWS의 CICD 서비스인 CodeCommit, CodePipeline, CodeBuild, 그리고 CodeDeploy의 역할과 사용법을 정리할 예정이다.
+
+특히 github의 CICD 서비스인 [Github Action](https://github.com/orgs/3rd-asac/discussions/4)과 AWS의 CICD 서비스를 비교하면서 정리할 것이다.
+
+- CodeCommit - code 저장
+- CodePipeline - Elastic Beanstalk에 code를 파이프라이닝
+- CodeBuild - 코드 빌드와 테스트
+- CodeDeploy - EC2 인스턴스에 code 배포
+- CodeStart - CodeCommit, CodePipeline, CodeBuild, 그리고 CodeDeploy를 사용하기 편하게 그룹화
+- CodeArtifact - SW 패키질르 저장, 배포, 공유
+- CodeGuru - 머신러닝을 이용해서 자동화된 코드를 리뷰
+
+## CICD란?
+
+- CI
+
+간단히 말해서 CI는 개발자들이 중앙 코드 레포지토리에 자주 푸시한다는 말. 레포지토리는 Github, Bitbucket, 그리고 AWS CodeCommit이 있다.
+코드가 푸시되자마자 테스트 혹은 빌드하는 프로덕트 서버와 별도의 서버가 존재할 것이다. github에서는 `Github Action`,`Jenkins`'이 그 역할을 수행할 수 있고,
+`AWS CodeBuild`와 같은 CI 툴을 사용할 수 있다.
+
+코드가 푸시된 즉시 빌드 및 테스트를 진행해서 개발자가 결과를 알림 받을 수 있고, 더 빠른 개발을 수행할 수 있다.
+
+- CD
+
+코드를 레포지토리에 푸시하기만 하면 적절한 과정을 거쳐서 바로 배포되도록하는 것. CI 부분을 다 통과하고 빌드 서버에서 배포 서버로 넘어간다.
+배포 서버는 애플리케이션 서버로 애플리케이션을 배포한다.
+
+**CD**를 통해 배포가 더 자주 발생할 수 있다. 이와 관련된 서비스는 `Jenkins CD`, `Spinnaker`, 그리고 ÀWS CodeDeploy`
+
+- CICD 기술 스택 정리
+
+- code 관리
+  - **AWS CodeCommit**
+  - Github
+  - Bitbucket
+- 빌드 및 테스트 관리
+  - **AWS CodeBuild**
+  - Jenkins CI
+- 배포
+  - **AWS CodeDeploy**, EC2 인스턴스, 람다, ECS 서버를 검색하고 직접 배포
+  - **AWS Elastic Beanstalk**
+- CICD 통합
+  - **AWS CodePipeline** AWS의 CICD 단계를 조정하고 정의
+
+## CodeCommit
+
+마치 Git처러 코드의 버전 컨트롤이 목표! Git repositories는 비용이 발생한다. **AWS CodeCommit**을 사용하면 **개인 VPC** 안에 코드가 있기 때문에 개인 Git 레포지토리가 생기는 것과 마찬가지다.
+따라서 **코드의 크기**가 **제한이 없다**. **완전 관리형**이기 때문에 **비용이 발생하지 않고**, AWS Cloud 상에 존재하므로 **보안성이 높다**.
+IAM을 통한 액세스 제한도 가능하고, Jenkins, CodeBuild 같은 CI 도구와 잘 통합된다.
+
+### CodeCommit 인증과 인가
+
+CodeCommit은 git 명령어로 작동할 수 있지만, 인증과 인가가 필요하다.
+
+인증은 SSH Key로 접근 방식과 표준 로그인 방식으로 비밀번호를 이용해서 액세스하는 HTTPS 방식으로 인증할 수 있다.
+인가는 IAM 정책을 통해 유저의 레포지토리 접근 권한을 관리할 수 있다.
+모든 코드는 KMS을 통해 암호화되고, 코드를 푸시할 때 SSH나 HTTPS를 이용해 암호화되어 코드가 전송된다.
+
+**무조건** 다른 사람과 SSH Key를 공유하면 안되고 IAM 역할을 생성해서 AWS STS나 AssumeRoleAPI를 이용하여 액세스하도록한다.
+
+### 사용시 주의 사항
+
+1. 레포지토리를 생성할 때 연결단계에서 **SSH**를 선택하지 못하는 경우는 루트 사용하일 경우다. **IAM 사용자**라면 SSH를 선택할 수 있다.
+2. Pull Request는 다른 브랜치를 메인 브랜치로 통합시킬 때 사용한다.
+3. **리포지토리 - 설정 - 알림**에서 알림 규칙 생성할 수 있는데, 이벤트에 따라 알림을 발생시킬 수 있다.
+4. **트리거**는 이벤트에 좀 더 상세하게 지정되는 코드, 지정한 문제가 발생할 때마다 SNS로 알림을 받게한다.
+5. HTTPS 방식으로 인증하려면 **IAM 역할**에서 CodeCommit의 HTTPS username과 password를 생성해야한다.
+   그리고 Github를 사용하는 것처럼 **레포지토리 URL**을 **복제**하고 **git clone**을 할 수 있는데, 이 때 **username**과 **password**가 필요하다.
+
+## CodePipeline
+
+CICD 서비스를 오케스트레이션할 수 있는 시각적 워크플로 툴이다.
+코드 소스(CodeCommit, ECR, S3, GitHub, ...)를 설정할 수 있다.
+Build 방법(CodeBuild, Jenkins, ...)을 설정할 수 있다.
+Test 방법(CodeBuild, ...)를 설정할 수 있다. 배포 방법(CodeDeploy, Elastic Beanstalk, S3, ...)을 설정할 수 있다.
+
+마치 Jenkins Pipeline처럼 각 단계를 **순차적**이나 **병렬적**인 액션으로 설정할 수 있다. 또한 수동으로 허가를 해야 다음 단계로 넘어갈 수 있도록 할 수 있다.
+예를 들어 프로덕션에 배포하기 전에 누군가가 로드 테스팅의 결과를 검토하도록 할 수 있다.
+
+### 구조
+
+1. 각 파이프라인이 아티팩트를 생성할 수 있다. 아티팩트는 파이프라인에서 생성된 모든 것을 정의
+   아티팩트는 S3 버킷에 저장되고 다음 stage로 넘겨진다.
+2. 모든 AWS CICD 서비스는 아티팩트를 생성하고 이를 S3에 저장한다.
+   또한 CICD 서비스는 호출될 때 이전 stage의 아티팩트를 S3에서 꺼내서 사용한다.
+
+<img alt="aws codepipeline 아티팩트 전달 구조" src="/static/images/aws/aws-code-pipeline.jpeg" />
+
+**CloudWatch Events**를 통해서 실패한 파이프라인이나 취소된 단계에 관한 이벤트 정보를 얻을 수 있다. 또한 콘솔을 통해 시각적으로 확인할 수 있다.
+IAM Service 역할을 확인해서 CodeBuild에서 어떤 코드를 호출할 수 없거나, CodeCommit에서 코드를 가져올 수 없는 상황을 막을 수 있다.
+만약 IAM 역할 문제로 거부된 APU들을 확인하려면 **AWS CloudTrail**을 사용할 수 있다.
+
+### 사용법
+
+1. Beanstalk에서 웹앱을 생성한다. CodePipeline을 통해서 업데이트를 Beanstalk 환경에 배포할 것.
+2. CodePipeline에서 Source Stage, build stage, deploy stage 설정.
+3. CodePipeline 설정을 하면 source의 값이 빌드되어 deploy 제공자로 자동으로 배포까지 이뤄진다.
+4. 한 stage에 여러 작업 그룹이 있어서 Stage 내부에서 특정 작업 (수동 승인 단계, 프로덕션 Beanstalk으로 배포)를 설정할 수 있다. 물론 각 작업끼리 전달되는 것은 아티팩트이다.
+   순차적, 병렬적으로 작업그룹을 설정할 수 있다.
