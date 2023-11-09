@@ -221,7 +221,7 @@ Batch fetching을 적용하는 방법은 `application.properties`에 아래와 �
 하지만, 애플리케이션은 100이든 1000이든 결국 전체 데이터를 로딩해야 하므로 메모리 사용량은 같다. **문제는 몇번 로딩하느냐!!**
 
 ```
-spring.jpa.properties.hibernate.default_batch_fetch_size = 5
+spring.jpa.properties.hibernate.default_batch_fetch_size = 10
 ```
 
 `Page<Product> findAll(Pageable pageable);`은 일반적인 Lazy 방식의 쿼리를 발생시킨다.
@@ -244,8 +244,6 @@ Hibernate:
         product p1_0
     limit
         ?,?
-2023-11-07T10:54:06.169+09:00  INFO 22001 --- [nio-8080-exec-2] c.e.s.p.controller.ProductConrollerV2    : Product ID: 1
-2023-11-07T10:54:06.169+09:00  INFO 22001 --- [nio-8080-exec-2] c.e.s.p.controller.ProductConrollerV2    : Product Name: 아이폰 에어포스 E7 90
 Hibernate:
     select
         s1_0.seller_id,
@@ -255,8 +253,7 @@ Hibernate:
     from
         seller s1_0
     where
-        s1_0.seller_id in (?,?,?,?,?,?,?,?,?,?)
-2023-11-07T10:54:06.173+09:00  INFO 22001 --- [nio-8080-exec-2] c.e.s.p.controller.ProductConrollerV2    : Seller Name: 오솔
+        s1_0.seller_id=?
 Hibernate:
     select
         p1_0.product_id,
@@ -266,5 +263,7 @@ Hibernate:
         product_content p1_0
     where
         p1_0.product_id in (?,?,?,?,?,?,?,?,?,?)
-
 ```
+
+원래 쿼리는 product를 찾는 것이고, Batch Fetch로 인해 10개를 제한해서 찾게된다. 그 후 product와 1:N 관계인 product_content를 찾게된다.
+이때 3번째 Hibernate에는 10개 product에 포함된 product_content를 찾게된다.
