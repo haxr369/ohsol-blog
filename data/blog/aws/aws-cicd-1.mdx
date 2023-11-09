@@ -1,0 +1,263 @@
+---
+title: AWS CICD 방법 (1)
+date: 2023-11-09
+lastmod: 2023-11-09
+tags: ['AWS', 'codecommit', 'codepipeline', 'codebuild', 'codedeploy', 'DVA-C02']
+draft: false
+summary: 'AWS CICD 서비스 정리와 CodeDeploy 실습 (1)'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+AWS의 CICD 서비스인 CodeCommit, CodePipeline, CodeBuild, 그리고 CodeDeploy의 역할과 사용법을 정리할 예정이다.
+
+특히 github의 CICD 서비스인 [Github Action](https://github.com/orgs/3rd-asac/discussions/4)과 AWS의 CICD 서비스를 비교하면서 정리할 것이다.
+
+- CodeCommit - code 저장
+- CodePipeline - Elastic Beanstalk에 code를 파이프라이닝
+- CodeBuild - 코드 빌드와 테스트
+- CodeDeploy - EC2 인스턴스에 code 배포
+- CodeStart - CodeCommit, CodePipeline, CodeBuild, 그리고 CodeDeploy를 사용하기 편하게 그룹화
+- CodeArtifact - SW 패키질르 저장, 배포, 공유
+- CodeGuru - 머신러닝을 이용해서 자동화된 코드를 리뷰
+
+## CICD란?
+
+- CI
+
+간단히 말해서 CI는 개발자들이 중앙 코드 레포지토리에 자주 푸시한다는 말. 레포지토리는 Github, Bitbucket, 그리고 AWS CodeCommit이 있다.
+코드가 푸시되자마자 테스트 혹은 빌드하는 프로덕트 서버와 별도의 서버가 존재할 것이다. github에서는 `Github Action`,`Jenkins`'이 그 역할을 수행할 수 있고,
+`AWS CodeBuild`와 같은 CI 툴을 사용할 수 있다.
+
+코드가 푸시된 즉시 빌드 및 테스트를 진행해서 개발자가 결과를 알림 받을 수 있고, 더 빠른 개발을 수행할 수 있다.
+
+- CD
+
+코드를 레포지토리에 푸시하기만 하면 적절한 과정을 거쳐서 바로 배포되도록하는 것. CI 부분을 다 통과하고 빌드 서버에서 배포 서버로 넘어간다.
+배포 서버는 애플리케이션 서버로 애플리케이션을 배포한다.
+
+**CD**를 통해 배포가 더 자주 발생할 수 있다. 이와 관련된 서비스는 `Jenkins CD`, `Spinnaker`, 그리고 ÀWS CodeDeploy`
+
+- CICD 기술 스택 정리
+
+- code 관리
+  - **AWS CodeCommit**
+  - Github
+  - Bitbucket
+- 빌드 및 테스트 관리
+  - **AWS CodeBuild**
+  - Jenkins CI
+- 배포
+  - **AWS CodeDeploy**, EC2 인스턴스, 람다, ECS 서버를 검색하고 직접 배포
+  - **AWS Elastic Beanstalk**
+- CICD 통합
+  - **AWS CodePipeline** AWS의 CICD 단계를 조정하고 정의
+
+## CodeCommit
+
+마치 Git처러 코드의 버전 컨트롤이 목표! Git repositories는 비용이 발생한다. **AWS CodeCommit**을 사용하면 **개인 VPC** 안에 코드가 있기 때문에 개인 Git 레포지토리가 생기는 것과 마찬가지다.
+따라서 **코드의 크기**가 **제한이 없다**. **완전 관리형**이기 때문에 **비용이 발생하지 않고**, AWS Cloud 상에 존재하므로 **보안성이 높다**.
+IAM을 통한 액세스 제한도 가능하고, Jenkins, CodeBuild 같은 CI 도구와 잘 통합된다.
+
+### CodeCommit 인증과 인가
+
+CodeCommit은 git 명령어로 작동할 수 있지만, 인증과 인가가 필요하다.
+
+인증은 SSH Key로 접근 방식과 표준 로그인 방식으로 비밀번호를 이용해서 액세스하는 HTTPS 방식으로 인증할 수 있다.
+인가는 IAM 정책을 통해 유저의 레포지토리 접근 권한을 관리할 수 있다.
+모든 코드는 KMS을 통해 암호화되고, 코드를 푸시할 때 SSH나 HTTPS를 이용해 암호화되어 코드가 전송된다.
+
+**무조건** 다른 사람과 SSH Key를 공유하면 안되고 IAM 역할을 생성해서 AWS STS나 AssumeRoleAPI를 이용하여 액세스하도록한다.
+
+### 사용시 주의 사항
+
+1. 레포지토리를 생성할 때 연결단계에서 **SSH**를 선택하지 못하는 경우는 루트 사용하일 경우다. **IAM 사용자**라면 SSH를 선택할 수 있다.
+2. Pull Request는 다른 브랜치를 메인 브랜치로 통합시킬 때 사용한다.
+3. **리포지토리 - 설정 - 알림**에서 알림 규칙 생성할 수 있는데, 이벤트에 따라 알림을 발생시킬 수 있다.
+4. **트리거**는 이벤트에 좀 더 상세하게 지정되는 코드, 지정한 문제가 발생할 때마다 SNS로 알림을 받게한다.
+5. HTTPS 방식으로 인증하려면 **IAM 역할**에서 CodeCommit의 HTTPS username과 password를 생성해야한다.
+   그리고 Github를 사용하는 것처럼 **레포지토리 URL**을 **복제**하고 **git clone**을 할 수 있는데, 이 때 **username**과 **password**가 필요하다.
+
+## CodePipeline
+
+CICD 서비스를 오케스트레이션할 수 있는 시각적 워크플로 툴이다.
+코드 소스(CodeCommit, ECR, S3, GitHub, ...)를 설정할 수 있다.
+Build 방법(CodeBuild, Jenkins, ...)을 설정할 수 있다.
+Test 방법(CodeBuild, ...)를 설정할 수 있다. 배포 방법(CodeDeploy, Elastic Beanstalk, S3, ...)을 설정할 수 있다.
+
+마치 Jenkins Pipeline처럼 각 단계를 **순차적**이나 **병렬적**인 액션으로 설정할 수 있다. 또한 수동으로 허가를 해야 다음 단계로 넘어갈 수 있도록 할 수 있다.
+예를 들어 프로덕션에 배포하기 전에 누군가가 로드 테스팅의 결과를 검토하도록 할 수 있다.
+
+**구조**
+
+1. 각 파이프라인이 아티팩트를 생성할 수 있다. 아티팩트는 파이프라인에서 생성된 모든 것을 정의
+   아티팩트는 S3 버킷에 저장되고 다음 stage로 넘겨진다.
+2. 모든 AWS CICD 서비스는 아티팩트를 생성하고 이를 S3에 저장한다.
+   또한 CICD 서비스는 호출될 때 이전 stage의 아티팩트를 S3에서 꺼내서 사용한다.
+
+<img alt="aws codepipeline 아티팩트 전달 구조" src="/static/images/aws/aws-code-pipeline.jpeg" />
+
+**CloudWatch Events**를 통해서 실패한 파이프라인이나 취소된 단계에 관한 이벤트 정보를 얻을 수 있다. 또한 콘솔을 통해 시각적으로 확인할 수 있다.
+IAM Service 역할을 확인해서 CodeBuild에서 어떤 코드를 호출할 수 없거나, CodeCommit에서 코드를 가져올 수 없는 상황을 막을 수 있다.
+만약 IAM 역할 문제로 거부된 APU들을 확인하려면 **AWS CloudTrail**을 사용할 수 있다.
+
+1. Beanstalk에서 웹앱을 생성한다. CodePipeline을 통해서 업데이트를 Beanstalk 환경에 배포할 것.
+2. CodePipeline에서 Source Stage, build stage, deploy stage 설정.
+3. CodePipeline 설정을 하면 source의 값이 빌드되어 deploy 제공자로 자동으로 배포까지 이뤄진다.
+4. 한 stage에 여러 작업 그룹이 있어서 Stage 내부에서 특정 작업 (수동 승인 단계, 프로덕션 Beanstalk으로 배포)를 설정할 수 있다. 물론 각 작업끼리 전달되는 것은 아티팩트이다.
+   순차적, 병렬적으로 작업그룹을 설정할 수 있다.
+
+### CodePipeline 기타사항
+
+- **Events** (default)
+  - 이벤트가 시작될 때마다 pipeline 시작
+  - CodeCommit의 커밋이 이벤트 브릿지에 이벤트를 생성, CodePipeline의 시작을 트리거한다.
+  - github에 커밋을 보려면 **CodeStar Source Connection**을 사용해서 이벤트 생성
+- **Webhooks**
+  - Webhook이 http 엔드포인트를 노출, 스크립트에 의해 트리거 가능
+- **Polling**
+  - CodePipeline이 소스를 풀링
+  - github을 규칙적으로 체크하여 가져옴
+
+**CodePipeline** 표의 의미
+
+<img src="/static/images/aws/aws-code-pipleline-table.png" width="500" />
+
+1. Owner : aws, 3rd Party 또는 커스텀이 있다.
+2. Action Type : Source (S3, ECR, Github), Build(CodeBuild, Jenkins), Test(CodeBuild, Jenkins), Invoke(Lambda), 그리고 Deploy(S3,
+   CloudFormation, CodeDeploy, ...)
+
+### 수동 승인의 작동 방식 (시험 출제 가능성)
+
+AWS가 제공하는 기능이기 때문에 **Owner**가 **AWS**이다. **수동 승인(Manual Approval)**을 수행하면 SNS 토픽을 트리거할 수 있고, SNS 토픽은 사용자에게 이메일을 보낸다.
+이때 유저는 IAM User인데 승인하기 위해선 2가지 권한이 필요하다. **GetPipeline** 실제 파이프라인을 확인하고 수동 승인 단계를 찾기 위함. **PutApprovalResult** 예, 아니오 같은 의사 결정을 보내기 위함
+
+## CodeBuild
+
+소스(S3, ECR, Github)에 **buildspec.yml** 파일이 루트에 위치해 있고, **Output logs**는 S3나 CloudWatch Logs에 저장될 수 있다. **CloudWatch Metrics**는 빌드 통계를 볼 수 있고, **CloudWatch Events**는 실패한 빌드를 찾아 알려줌.
+
+CodeBuild는 수 많은 언어로된 사전 빌드 이미지가 있어서 애플리케이션을 테스트할 수 있다. 사용법은 아래와 같다.
+
+1. CodeCommit(소스)에 여러 소스 파일이 있고, 루트에 buildspec.yml이 있다.
+2. CodeBuild의 컨테이너에서 소스의 파일을 가져온다.
+3. buildspec.yml의 모든 명령을 실행. 이 과정에서 외부 사전 정의 도커 이미지를 사용할 수 있다.
+4. 빌드 작업이 길어질 수 있고, 캐싱을 위해서 S3에 몇몇 파일을 캐시 저장할 수 있다.
+5. 빌드 과정 중 모든 로그는 S3나 CloudWatch Logs에 저장
+6. 다른 CICD 서비스와 동일하게 작업(빌드, 테스트)가 완료되면 아티팩트를 생성하고 S3에 저장
+
+**buildspec.yml 주의할 점**
+
+꼭 루트 디렉토리에 위치애있어야하고 필요한 환경 변수는 **env**에 정의할 수 있다. env에는 **variables**, **parameter-store**, 그리고 **secrets-manager**를 정의할 수 있다.
+**phase**에는 CodeBuild의 동작 과정을 정의한다. **artifacts**는 S3 버킷에 업로드할 파일 이름이고 기본적으로는 KMS로 암호화되어야한다.
+**cache**에는 S3에 저장할 캐시이름을 작성(다음 빌드를 빠르게 해준다.)
+
+CodeBuild는 작업량이 매우 많기 때문에 로컬 PC(도커 컨테이너)에서 실행시킬 수 있다. 또한 CodeBuild의 컨테이너는 VPC 외분에서 동작하기 때문에 VPC 내부 리소스(EC2, ElastiCache, ALB,...)에 접근할 수 없다.
+그렇기에 VPC 설정 (VPC id, Subnet id, SG ids)를 설정하여 VPC 내부에서 동작하게 한다면 VPC 내부 리소스에 CodeBuild가 접근할 수 있다.
+
+### CloudFormation
+
+CloudFormation은 AWS API를 사용하여 복잡한 인프라를 배포하는데 사용한다. CloudFormation은 ASG, ELB, RDS 등 어떤 인프라든 배포할 수 있다.
+CodePipeline에서 CloudFormation을 상ㅇ할 수 있다. CodeBuild 후 stage로써 배치하고 Create_Udate 모드에 배치하면 CloudFormation 스택이 생성된다.
+이 스택 안에는 ALB와 ASG가 있을 수 있다.
+
+스택이 배포된 후 다른 CodeBuild stage로 이동할 수 있다. 이번에는 test를 실행하기 위함! 새로 배포된 애플리케이션에 API 호출을 통해 예상대로 작동하는지 비정상 종료는 없는지 확인할 수 있다.
+그 다음 CloudFormation은 Delete_Onlu 모드로 Test Infra를 제거할 수 있다. 테스트 후에 아무 일도 없었던 것처럼 삭제할 수 있다.
+테스트 환경을 삭제한 후 CloudFormation은 프로덕션 인프라를 배포할 수 있고, 이때는 스택을 생성하진 않는다.
+
+## CodeDeploy
+
+애플리케이션 배포를 자동화해주는 배포 서비스. 애플리케이션은 EC2, Lambda나 ECS 서비스에서 실행하는데 여기에 CodeDeploy가 배포할 수 있다.
+CodeDeploy는 애플리케이션을 업데이트할 수 있지만, 문제가 생길 경우 롤백도 가능하다. 또한 인스턴스들에 애플리케이션을 업데이트하는 순서를 정할 수 있다. (한번에 전부 업데이트 or 순서대로 업데이트)
+CodeBuild처럼 `appspec.yml`을 이용해서 배포 방식을 설정할 수 있다.
+
+**EC2/On-premises 플랫폼에 배포**
+
+- 두가지 배포 종류를 결정할 수 있다. (현재 위치(in-place) 배포 & blue/green 배포 )
+  - blue/green 배포 방식은 기존 ASG를 놔두고 동일한 개수의 인스턴스를 가진 ASG를 생성한다. 여기에는 최신 버전의 애플리케이션이 실행된다. ALB는 기존 ASG와 새로운 ASG의 부하를 조금씩 옮겨서 최종적으로 새로운 ASG에만 부하가 가도록 한다.
+- 무조건 **CodeDeploy Agent**를 타켓 인스턴스에 배포해야한다. **Agent**가 업데이트를 수행하기 때문!
+  - EC2 인스턴스에 Agent를 설치하는데 직접 설치하거나 System Manager를 이용해서 설치할 수 있다.
+  - 업데이트된 애플리케이션이 AWS S3에 저장되기 때문에 EC2 인스턴스는 S3에 접근하기 위한 IAM 역할이 있어야한다.
+- 배포 속도 정의 (한번에 배포(AllAtOnce) & 점진적 배포(HalfAtATime, OneAtATime) & Custeom)
+  - in-place 배포 방식에서 4개의 인스턴스가 있을 때 HalfAtATime은 2개를 다운시켜 업데이트한 다음 나머지 절반을 다운시켜 업데이트한다.
+
+**Lambda에 배포**
+
+CodeDeploy는 Lambda 별칭(aliases)를 위해 자동으로 트래픽을 이전하도록 할 수 있다. 이 피처는 **SAM** 프레임워크 안에 완전히 통합된다.
+`V1`과 `V2` 그리고 `PROD Alias`가 있을 때 `PROD Alias`는 V1의 부하를 점진적으로 V2로 옮긴다. 최종적으로 모든 트래픽이 V2 함수로 리디렉션된다. 부하의 정도는 **CodeDeploy**가 설정한다.
+부하를 옮기는 방법은 아래와 같다.
+
+- Linear
+  - 부하를 점진적으로 옮긴다.
+  - LambdaLinear10PercentEvery#Minutes
+  - 매 3분마다 선형적으로 10%씩 V1에서 V2로 부하를 옴긴다. 30분이면 전부 옮긴다.
+- Canary
+  - 초기에 x% 만큼 주다가 한번에 100%로 올리는 방법
+  - LambdaCanary10Percent5Minutes
+  - 5분 동안 V2 함수는 10%를 받다가 그 이후에는 100%를 받는다.
+- AllAtOnce
+  - V2가 시작하자마자 100%를 받음, Canary와 다르게 테스트할 시간이 없다.
+
+**ECS에 배포**
+
+CodeDeploy는 새로운 ECS 테스크 정의를 배포할 수 있다. 오직 Blud/Green 배포 방식만 사용가능하다.
+초기에 ALB와 ECS Cluster 안에 V1의 대상 그룹이 연결되어 있을 때, CodeDeploy는 새로운 V2의 대상 그룹을 생성하고 이는 새로운 ECS 테스크 정의를 기반으로 생성한다.
+그 다음 ALB에게 V2 대상 그룹으로 부하를 리디렉션하도록 명령. 모든 트래픽을 이전하면 기존 대상 그룹 제거. 트래픽을 옮기는 방법은 다음과 같다.
+
+- Linear
+- Canary
+- AllAtOnce
+
+### CodeDeploy 실습
+
+1. IAM 역할 생성
+   - 먼저, CodeDeploy와 EC2를 위한 역할을 생성해야한다. EC2는 S3의 파일을 읽을 수 있는 `AmazonS3readOnlyAccess` 권한을 가져한다.
+2. 애플리케이션 생성과 배포 그룹을 위한 EC2 생성
+
+   - EC2를 위한 애플리케이션 생성과 그 배포 그룹을 위해 먼저 EC2 인스턴스를 생성해야한다. 이때 EC2에는 http 연결과 ssh 연결이 가능해야한다.
+   - EC2에 CodeDeploy Agent 설치하기
+   - EC2에 앞에서 생성한 IAM 역할 적용하기
+
+   ```
+   #!/bin/bash
+   # Installing CodeDeploy Agent
+   sudo yum update
+   sudo yum install ruby
+
+   # Download the agent (replace the region)
+
+   wget https://aws-codedeploy-eu-west-3.s3.eu-west-3.amazonaws.com/latest/install
+   chmod +x ./install
+   sudo ./install auto
+   sudo service codedeploy-agent status
+   ```
+
+3. 배포 그룹과 배포 생성하기
+   - EC2에 tag를 이용해서 대상그룹을 결정할 수 있고, 그 대상 그룹으로 배포 그룹을 만들 수 있다.
+   - 배포 그룹을 생성했다면, 배포를 생성해야한다. 이때 애플리케이션은 S3에 저장되어 있어야한다.
+     - S3의 region은 codedeploy와 동일해야한다.
+     - 애플리케이션의 루트 디렉토리에 `appspec.yml`이 있어야한다.
+     - 애플리케이션 zip 파일의 url을 `개정 위치`에 붙여넣는다.
+   - 배포 생성 완료되면 수명 주기 이벤트를 볼 수 있다.
+
+### CodeDeploy 재배포와 롤백
+
+롤백이란 이전에 배포된 애플리케이션의 리비전을 재배포. 롤백하는 방법은 두가지가 있다.
+
+1. Automatically
+   - CloudWatch 알림이 일어나거나 배포에 실패했을 때
+2. Manually
+
+롤백을 비활성화하면 롤백이 실행되지 않고, 롤백하면 CodeDeploy는 마지막으로 감지한 성공한 리비전을 새로 배포하는데 **이전으로 돌아가진 않는다.**
+그냥 새로운 배포를 하는데 가장 나중에 성공한 배포를 사용하는 것 뿐이다. 따라서 **복원**된 버전이 아니고 **새로운** 배포에 해당한다.
+
+### CodeDeploy 문제해결
+
+배포를 생성하고 서명 만료로 인해 `InvalidSignatureException`이라는 배포 오류가 표시되는 경우가 있다.
+이는 CodeDeploy가 **정확한 시간참조**를 하지 못했을 때 발생한다. 즉 CodeDeploy의 시간과 EC2 인스턴스의 시간을 확인해야한다.
+EC2의 시간이 옳바르지 않으면 CodeDeploy는 배포를 거부한다.
+
+이 문제를 해결하기 위핸선 EC2 인스턴스의 시간을 AWS와 동기화된 올바른 시간 서버에 연결되도록 하는 것.
+
+EC2에서 문제가 생겨서 배포하지 못한 경우 `/opt/codedeploy-agent` 폴더에 에이전트의 로그를 확인할 수 있다.

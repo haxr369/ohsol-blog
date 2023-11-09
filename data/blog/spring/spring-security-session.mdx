@@ -1,0 +1,240 @@
+---
+title: Spring Security filter 정리
+date: 2023-11-09
+lastmod: 2023-11-09
+tags: ['java', 'Security', 'spring']
+draft: false
+summary: 'Spring Security Filter가 OAuth 인증 후 Session ID로 유저의 Security Context를 찾는 방법'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 개요
+
+Spring Security를 공부하던 중 Session ID를 바탕으로 Security Context Holder에 유저의 인증 정보 저장하고 사용하는 과정이
+궁금해졌다. 문제를 두가지로 분리하고 세부적으로 생각해보면 아래와 같다.
+
+1. **Session ID**와 맞게 **Security Context Holder**에 **AuthenticationToken**를 저장하는 방법
+   - Http Session 저장소에 유저 정보 저장 방법
+   - Security Context에 인증 정보 저장 방법
+2. **Session ID**로 유저의 **AuthenticationToken**을 불러와서 사용하는 방법
+   - 쿠키로 들어온 http request의 Session ID로 유저 인증 방법
+   - 인증을 기반으로 `getContext()`로 Security Holder에서 유저의 Security Contex를 받는 방법
+
+기본적인 Filter와 Interceptor의 구조는 아래 그림과 같다.
+
+<img src="/static/images/spring/spring-security-container.png" alt="Filter와 Interceptor의 구조" />
+
+그림을 참고하면 유저 요청은 **Filter** 중 **DelegatingFilterProxy**가 **@Bean**으로 저장된 Filter를 사용할 수 있도록
+**FilterChainProxy**가 **Spring Contrainer**에 저장된 다수 Filter를 사용할 수 있도록함.
+
+또한 Spring Security가 Session을 생성하는 설정은 다음과 같다.
+
+1. `SessionCreationPolicy.ALWAYS` - 세션을 항상 생성한다.
+2. `SessionCreationPolicy.NEVER` - 세션을 절대 만들지 않는다. 그러나 이미 존재하면 `HttpSession`을 사용하긴한다.
+3. `SessionCreationPolicy.IF_REQUIRED` - (\*default\*\*) 세션이 필요할 때 생성한다.
+4. `SessionCreationPolicy.STATELESS` - SecurityContext를 얻기 위해 절대 사용하지 않고, 세션을 만들지도 않는다.
+
+세션 생성의 기본 값은 **필요할 때** 생성이므로 유저 인증 정보가 필요할 때 사용하고, `permitAll`이 아닌 url을 요청하면 자동으로 생성될 것이다.
+
+## 결론
+
+- 유저 인증 정보가 없는 경우, **AuthorizationFilter**로 예외를 발생시키고 anoymous user로 authentication 저장.
+- 로그인을 하는 경우, **OAuth2LoginAuthenticationFilter**에서 OAuth 로그인을 수행 및 인증 정보 저장
+- 유저가 세션 ID 같은 인증 정보를 제공하면서 요청하는 경우, **SecurityContextHolderFilter**를 바로 **SecurityContext**를 load
+
+**ExceptionTranslationFilter**로 인해서 유저의 principal이 `anonymousUser`가 되는 것을 알 수 있고, 기본적인 authentication를 생성한다.
+따라서 로그인을 하던말던 무조건 **authentication**를 얻을 수 있게된다. `SecurityContextHolderFilter`는 http request가 있을 때 SecurityContext를
+로드할 뿐이고, 로그인 후 authentication의 생성 및 저장은 `OAuth2LoginAuthenticationFilter`가 수행한다.
+유저 인증 정보를 바탕으로 **SecurityContextHolderFilter**에서 SecurityContext를 세션에 저장하기 때문에 `SecurityContextHolder.getContext();`와 같이 아무런 파라미터 없이 Context를 가져올 수 있다.
+
+## 코드 실행 확인하기
+
+아래 코드는 filterChain을 설정하는 **SecurityConfig**이며, 이를 통해 사용할 Filter를 확인할 수 있다.
+
+```java:SecurityConfig.java
+@RequiredArgsConstructor
+@EnableWebSecurity(debug = true)
+@EnableMethodSecurity
+@Configuration
+public class SecurityConfig {
+    private final CustomOAuth2UserService customOAuth2UserService;
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+                .authorizeHttpRequests(authorize -> authorize
+                        .requestMatchers("/login").permitAll()
+                        .requestMatchers("/").permitAll()
+                        .anyRequest().authenticated())
+                .oauth2Login(oauth2Login -> oauth2Login
+                        .loginProcessingUrl("/login")
+                        .redirectionEndpoint(redirectionEndpointConfig -> redirectionEndpointConfig
+                                .baseUri("/oauth2/code/*"))
+                        .userInfoEndpoint(userInfoEndpointConfig -> userInfoEndpointConfig
+                                .userService(customOAuth2UserService))
+                        .defaultSuccessUrl("/"));
+        return http.build();
+    }
+}
+```
+
+클라이언트가 OAuth 로그인하게되면 WAS가 유저에게 `defaultSuccessUrl`로 리다이렉트하면서 `JSESSIONID`를 쿠키로 전달한다.
+`@EnableWebSecurity(debug = true)`를 설정하면 아래처럼 사용되는 filter chain을 확인할 수 있다.
+
+```:filter chain 리스트
+Security filter chain: [
+  DisableEncodeUrlFilter
+  WebAsyncManagerIntegrationFilter
+  SecurityContextHolderFilter
+  HeaderWriterFilter
+  CorsFilter
+  LogoutFilter
+  OAuth2AuthorizationRequestRedirectFilter
+  OAuth2LoginAuthenticationFilter
+  DefaultLoginPageGeneratingFilter
+  DefaultLogoutPageGeneratingFilter
+  RequestCacheAwareFilter
+  SecurityContextHolderAwareRequestFilter
+  AnonymousAuthenticationFilter
+  ExceptionTranslationFilter
+  AuthorizationFilter
+]
+```
+
+클라이언트가 쿠키에 `JSESSIONID`를 작성해서 http request하면 **FilterChain**을 통해 유저의 SecurityContextHolder를 결정하고
+아래 코드처럼 `SecurityContextHolder.getContext();`에서 유저 인증 정보를 얻을 수 있다.
+
+```java:UserController.java
+@GetMapping("/loginInfo")
+@ResponseBody
+public String oauthLoginInfo(){
+    // Security Context Holder에 Authentication을 사용할 수 있다.
+    SecurityContext context = SecurityContextHolder.getContext();
+    // Bean에서 사용자 정보 얻기 -> 전역에서 선언된 SecurityContextHolder를 이용해서 가져오기
+    OAuth2User oAuth2User = (OAuth2User) context.getAuthentication().getPrincipal();
+    Map<String, Object> attributes = oAuth2User.getAttributes();
+    return attributes.toString();
+}
+// 출력 : {social=facebook, name=오찬솔, nickname=오찬솔, userEmail=haxr369@gmail.com, id=805854841271115, picture=null}
+```
+
+## 각 필터의 역할
+
+### SecurityContextHolderFilter
+
+`SecurityContextHolderFilter`는 요청에 따라 SecurityContext를 얻을 수 있고, SecurityContextHolder에 SecurityContext를 저장할 수 있다.
+
+<img
+  src="/static/images/spring/spring-securitycontextholderfilter.png"
+  alt="securitycontextholderfilter 구조"
+/>
+
+SecurityContextHolderFilter를 지나게되면 다른 애플리케이션을 실행하기 전에 **SecurityContextRepository**에서 **SecurityContext**를 로드할 수 있고,
+그리고 **SecurityContextHolder**에 **SecurityContext**를 저장할 수 있다.
+따라서 로그인을 수행한 유저가 WAS에 접근해서 SecurityContextHolderFilter를 지나면 유저의 **SecurityContext**를 로드할 수 있다.
+그렇다면 [로그인 안한 유저가 접근하면 어떻게 되며](/blog/spring/[미완]spring-security-session#exceptiontranslationfilter), [세션 ID를 바탕으로 Context를 어떻게 찾을 것]()인지 궁금해진다.
+
+`SecurityContextPersistenceFilter`와 비슷하지만 이는 Spring Security 6.xx 버전부터 사용되지 않는다.
+
+### OAuth2LoginAuthenticationFilter
+
+OAuth 2.0 로그인을 위해 사용되는 인터페이스로, authorization code grant를 위한 **OAuth 2.0 Authorization Respons**의 과정을 다룬다.
+OAuth2LoginAuthenticationToken을 AuthenticationManager에 위임하여 최종 사용자(Resource owner)에 로그인한다. OAuth 2.0 Authorization Response 과정은 아래와 같다.
+
+> Assuming the End-User (Resource Owner) has granted access to the Client, the Authorization Server will append the code and state parameters to the redirect_uri (provided in the Authorization Request) and redirect the End-User's user-agent back to this Filter (the Client).
+>
+> > 클라이언트가 인증 서버에서 로그인하고 클라이언트에 대한 액세스를 허용하면, 인증 서버는 코드 및 상태 변수를 **redirect_uri**에 추가하고 **Resource Owner**의 에이전트를 클라이언트로 리디렉션한다.
+
+> This Filter will then create an OAuth2LoginAuthenticationToken with the code received and delegate it to the AuthenticationManager to authenticate.
+>
+> > 리디렉션된 이 필터는 코드로 OAuth2LoginAuthenticationToken를 생성하고, AuthenticationManager에 인증을 위임한다.
+
+> Upon a successful authentication, an OAuth2AuthenticationToken is created (representing the End-User Principal) and associated to the Authorized Client using the OAuth2AuthorizedClientRepository.
+>
+> > 인증이 성공하면, OAuth2AuthenticationToken이 생성되고 최종 사용자의 **Principal**을 재작성한다. 또한, OAuth2AuthorizedClientRepository를 사용하여 Authorized Client에 연결한다.
+
+> Finally, the OAuth2AuthenticationToken is returned and ultimately stored in the SecurityContextRepository to complete the authentication processing
+>
+> > 최종적으로 OAuth2AuthenticationToken을 **SecurityContextRepository**에 저장하고 반환함으로써 인증 과정을 마친다.
+
+위 내용을 바탕으로 로그인하지 않은 유저가 서버에 접속하면 `OAuth2LoginAuthenticationFilter`에서 유저의 인증 정보를 바탕으로 **AuthenticationToken**을 생성 및 저장하는 것을 알 수 있다.
+
+### SecurityContextHolderAwareRequestFilter
+
+ServletRequest를 SecurityContextHolderAwareRequestWapper로 감싸고 Servlet API 보안 메서드를 구현한다.
+
+`HttpServletRequest.login`은 유저에게 AuthenticationManager를 사용해서 인증을 진행할 수 있도록한다.
+
+위와 같은 메서드 외에도 인증 정보를 바탕으로 login page를 보내거나 말거나 결정하는 `HttpServletRequest.authenticate`나 `logout`,`AsyncContext.start`와 같은 다양한 API를 제공한다.
+
+### AuthorizationFilter
+
+<img
+  src="/static/images/spring/spring-authorizationfilter.png"
+  alt="spring-authorizationfilter 구조"
+  width="700"
+/>
+
+- **AuthorizationFilter**는 **Authentication**을 **SecurityContextHolder**에서 가져오는 **Suplier**를 생성한다.
+- **AuthorizationManager**에게 Suplier와 HttpServletRequest를 전달한다.
+- **AuthorizationManager**는 요청을 authorizationHttpRequests의 패턴과 일치시키고 해당 규칙을 실행
+- 인증이 거부되면 **AuthorizationDeniedEvent**를 발행하고 **AccessDeniedException** 예외를 던진다. 이때 **ExceptionTranslationFilter**가 이 예외를 다룬다.
+- 인증이 성공하면 **AuthorizationGrantedEvent**를 발행하고 AuthorizationFilter가 **FilterChain**에 따라 애플리케이션을 계속 진행시킨다.
+
+### ExceptionTranslationFilter
+
+**AccessDeniedException**이나 **AuthenticationException** 예외를 처리하는 필터. Http Respons와 Java exception을 연결하기 때문에 필수적이다.
+특히 **AccessDeniedException**가 발견되면 필터는 user를 `anoymous user`로 결정한다. 그리고 유저가 `anoymous user`라면 **authenticationEntryPoint**를 실행시킨다.
+
+## 실험
+
+### 로그인에 따른 Authentication 변화
+
+로그인 안한 유저 (JSESSIONID를 제공하지 않은 유저)의 Security Context를 확인해보자.
+로그인 안한 경우와 한 경우를 나눠서 실험하고 출력 결과를 확인한다.
+
+```java:NotLoggined.java
+@GetMapping("/loginInfo")
+@ResponseBody
+public String oauthLoginInfo(){
+    SecurityContext context = SecurityContextHolder.getContext();
+
+    Authentication authentication = context.getAuthentication();
+    log.info("authorities : " + authentication.getAuthorities().toString());
+    log.info("principal : "+authentication.getPrincipal().toString());
+    log.info("credentials : "+authentication.getCredentials().toString());
+    OAuth2User oAuth2User = (OAuth2User) context.getAuthentication().getPrincipal();
+
+    Map<String, Object> attributes = oAuth2User.getAttributes();
+    return attributes.toString();
+}
+```
+
+```:로그인-전-authentication
+authorities : [ROLE_ANONYMOUS]
+principal : anonymousUser
+credentials :
+authenticated : AnonymousAuthenticationToken [Principal=anonymousUser, Credentials=[PROTECTED],
+                Authenticated=true, Details=WebAuthenticationDetails [RemoteIpAddress=0:0:0:0:0:0:0:1,
+                SessionId=null], Granted Authorities=[ROLE_ANONYMOUS]]
+```
+
+```:로그인-후-authentication
+authorities : [ROLE_USER]
+principal : Name: [805854841271115], Granted Authorities: [[ROLE_USER]],
+            User Attributes: [{social=facebook, name=오찬솔, nickname=오찬솔, userEmail=haxr369@gmail.com,
+            id=805854841271115, picture=null}]
+credentials :
+authenticated : OAuth2AuthenticationToken [Principal=Name: [805854841271115],
+              Granted Authorities: [[ROLE_USER]],
+              User Attributes: [{social=facebook, name=오찬솔,
+                                nickname=오찬솔, userEmail=haxr369@gmail.com,
+                                id=805854841271115, picture=null}], Credentials=[PROTECTED],
+                                Authenticated=true, Details=WebAuthenticationDetails
+              [RemoteIpAddress=0:0:0:0:0:0:0:1, SessionId=C66C46ACA67494C71AF80600FBD47CC3],
+              Granted Authorities=[ROLE_USER]]
+
+```
+
+위 로그인 전, 후의 authentication을 확인해보면 `Authenticated`가 모두 true로 적혀있는 것을 볼 수 있다. 신기한 부분!!
