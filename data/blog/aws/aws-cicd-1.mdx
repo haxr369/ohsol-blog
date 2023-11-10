@@ -99,9 +99,9 @@ Test 방법(CodeBuild, ...)를 설정할 수 있다. 배포 방법(CodeDeploy, E
 
 <img alt="aws codepipeline 아티팩트 전달 구조" src="/static/images/aws/aws-code-pipeline.jpeg" />
 
-**CloudWatch Events**를 통해서 실패한 파이프라인이나 취소된 단계에 관한 이벤트 정보를 얻을 수 있다. 또한 콘솔을 통해 시각적으로 확인할 수 있다.
-IAM Service 역할을 확인해서 CodeBuild에서 어떤 코드를 호출할 수 없거나, CodeCommit에서 코드를 가져올 수 없는 상황을 막을 수 있다.
-만약 IAM 역할 문제로 거부된 APU들을 확인하려면 **AWS CloudTrail**을 사용할 수 있다.
+**CloudWatch Events**를 통해서 **실패**한 파이프라인이나 **취소**된 단계에 관한 **이벤트 정보**를 얻을 수 있다. 또한 콘솔을 통해 시각적으로 확인할 수 있다.
+**IAM Service 역할**을 확인해서 CodeBuild에서 어떤 코드를 호출할 수 없거나, CodeCommit에서 코드를 가져올 수 없는 상황을 막을 수 있다.
+만약 IAM 역할 문제로 거부된 API들을 확인하려면 **AWS CloudTrail**을 사용할 수 있다.
 
 1. Beanstalk에서 웹앱을 생성한다. CodePipeline을 통해서 업데이트를 Beanstalk 환경에 배포할 것.
 2. CodePipeline에서 Source Stage, build stage, deploy stage 설정.
@@ -147,6 +147,9 @@ CodeBuild는 수 많은 언어로된 사전 빌드 이미지가 있어서 애플
 5. 빌드 과정 중 모든 로그는 S3나 CloudWatch Logs에 저장
 6. 다른 CICD 서비스와 동일하게 작업(빌드, 테스트)가 완료되면 아티팩트를 생성하고 S3에 저장
 
+> 일련의 마크다운 파일에서 static 파일을 생성한 후 SPA를 S3 버킷에 자동으로 배포하려고 할 때 **CodePipeline**과 **CodeDeploy**를 사용해서 배포할 수 있다.
+> CodeBuild는 모든 명령을 실행할 수 있기 때문에 static 웹 사이트 구축 및 static 웹 파일을 S3 버킷에 복사하는 작업을 수행할 수 있기 때문이다.
+
 **buildspec.yml 주의할 점**
 
 꼭 루트 디렉토리에 위치애있어야하고 필요한 환경 변수는 **env**에 정의할 수 있다. env에는 **variables**, **parameter-store**, 그리고 **secrets-manager**를 정의할 수 있다.
@@ -173,6 +176,8 @@ CodeDeploy는 애플리케이션을 업데이트할 수 있지만, 문제가 생
 CodeBuild처럼 `appspec.yml`을 이용해서 배포 방식을 설정할 수 있다.
 
 **EC2/On-premises 플랫폼에 배포**
+
+CodeDeploy의 적절한 수명 주기 이벤트 순서는 **ApplicationStop**, **DownloadBundle**, **BeforeInstall**, **Install**, **AfterInstall**, **ApplicationStart**, 그리고 **ValidateService** 순이다.
 
 - 두가지 배포 종류를 결정할 수 있다. (현재 위치(in-place) 배포 & blue/green 배포 )
   - blue/green 배포 방식은 기존 ASG를 놔두고 동일한 개수의 인스턴스를 가진 ASG를 생성한다. 여기에는 최신 버전의 애플리케이션이 실행된다. ALB는 기존 ASG와 새로운 ASG의 부하를 조금씩 옮겨서 최종적으로 새로운 ASG에만 부하가 가도록 한다.

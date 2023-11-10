@@ -1,0 +1,102 @@
+---
+title: AWS CICD 방법 (2)
+date: 2023-11-09
+lastmod: 2023-11-09
+tags: ['AWS', 'CoddStar', 'CodeArtifact', 'CodeGuru', 'Cloud9', 'DVA-C02']
+draft: false
+summary: 'AWS CICD 서비스 정리 CodeStar, CodeArtifact, CodeGuru, 그리고 AWS Cloud9'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+AWS의 CICD 서비스인 CodeStar, CodeArtifact, CodeGuru, 그리고 AWS Cloud9에 대해서 정리한다.
+
+## CodeStar
+
+CodeStar는 모든 AWS의 CICD 서비스를 그룹화하는 통합 솔루션이다. 심지어 commit, build depoy까지 전부 관할하는 CodePipeline까지 한번에 볼 수 있다.
+몇가지 클릭만으로 CICD가 적용된 EC2, 람다 프로젝트를 실행시킬 수 있다.
+
+CodeStar에는 JIRA나 Github Issues 같은 도구로 문제 추적이 가능하다. 또한 Cloud9과 통합하면 웹 IDE에서 코딩을 통합할 수 있다.
+웹 상에서 모든 컴포넌트를 볼 수 있도록 데시보드가 있으며 무료 서비스이고 CodeCommit이나 CodeBuild의 기본 사용량 만큼 요금이 부과된다.
+
+### 사용시 주의 사항
+
+1. CodeStar는 IAM 역할을 사용하므로 IAM Service Role을 생성해야한다.
+2. 애플리케이션 타입, 구동 플랫폼, 그리고 사용 언어에 따라 템플릿을 결정한다.
+3. 당연히 애플리케이션이기에 코드가 **소스(CodeCommit or GitHub)**에 저장되어야한다.
+4. 프로젝트기 때문에 사용자나 IAM 유저를 팀 멤버를 설정할 수 있다.
+5. Pipeline 탭은 CodePipeline의 인터페이스를 확인할 수 있다. 여기서 커밋, 빌드, 테스트, 배포 내용을 확인할 수 있다.
+
+## AWS CodeArtifact
+
+소프트웨어 패키지가 서로 의존하는 것은 코드 종속성이라한다. SW를 빌드할 때마다 SW를 레포지토리에 푸시하면 다른 소프트웨어가 이를 기반으로 빌드된다.
+아티팩트 관리(artifacts management)는 코드 간 종속성을 저장 및 사용한다. CodeArtifact에는 일반적인 종속성 관리 도구들 (Gradlem, npm, yarn, pip,...)과 통합돼있다.
+
+CodeArtifact를 사용하면 CodeBuild와 개발자가 클라우드 상에서 종속성을 검색할 수 있다. 이는 커스텀 라이브러리를 클라우드에서 관리하고 빌드할 때 사용할 수 있는 것이기도 하다.
+개발자의 npm은 종속성이 필요한 것이 있을 때 먼저 **CodeArtifact**을 찾고 없다면 퍼블릭 아티팩트 레포지토리에 연결된다.
+
+<img src="/static/images/aws/aws-codeartifact.png" alt="code artifact의 구조" />
+
+JS 개발자가 오직 CodeArtifact와만 상호작용하고 CodeArtifact 자체에 종속성이 캐시되기 때문에 퍼블릭의 상황과 무관하게 항상 빌드할 수 있는 장점이 있다.
+npm 뿐만 아니라 pip, Maven, NuGet 등등 많은 종속성 관리 툴에 적용된다.
+또한 IT 리더가 패키지를 **직접** 배포 및 승인하여 CodeArtifact 내 다른 레포지토리로 **푸시**되도록 할 수 있다.
+
+모든 코드가 VPC 내부의 CodeArtifact 관리 시스템 내에 패키지에 종속되게 된다. 그렇기 때문에 AWS CodeBuild가 퍼블릭 레포지토리 대신 CodeArtifact의 패키지를 fetch해서 가져올 수 있다.
+
+**CodeArtifact EventBridge**
+
+CodeArtifact가 관리하는 패키지의 생성, 수정 또는 제거가 일어날 때 Event가 생성되고 **EventBridge**에 전달된다. EventBridge에서는 람다, SNS, SQS 같은 서비스를 실행시킬 수 있다.
+재밌는 점은 패키지가 업데이트될 때마다 **CodePipeline**을 트리거할 수 있다는 점이다. 그 이유는 프로젝트는 종속성에 의존하기 때문에 이 종속성에 변화가 있다면 새롭게 Commit하고 Build하며 ReDeploy하도록하여 최신의 코드가 배포될 수 있게하는 자동화 방식이다.
+
+**Resource Policy**
+
+다른 계정이나 그 역할이 CodeArtifact에 접근하려면 **Resource Policy**를 설정해서 권한을 부여할 수 있다.
+주의할 점은 `모든 레포지토리`에 권한을 부여하거나 `아무 권한`도 부여하지 않아야한다. 크로스 계정 접근이 필요할 때마다 대부분 리소스 정책을 사용하게 된다.
+
+**Upstream repositories**
+
+한 CodeArtifact 내부에 특정 레포지토리가 다른 레포지토리를 Upstream할 수 있다. 이를 통해 개발자는 단 하나의 레포지토리에 연결함으로써 프라이빗 종속성에 액세스할 수 있고, 외부 연결을 통해 정의한 퍼블릭 종속성에도 액세스할 수 있는 장점이 있다.
+하지만, 최대 10개까지 레포지토를 Upstream할 수 있고, 완벽한 캐싱 매커니즘을 위해 오직 하나의 외부 연결을 할 수 있다.
+오직 **하나의 외부 연결**이 가능하기 때문에 **외부 연결된 레포지토리**를 다른 레포지토리가 **Upstream**하면 **모든 레포지토리**가 외부와 **연결**된 것과 동일한 효과를 얻는다.
+
+만약 요구된 **패키지 버전**이 **Upstream artifacts**에 **저장**되어있다면 모든 **downstream 레포지토리**는 이 패키지를 사용할 수 있다.
+하지만 **모든** 레포지토리에 요구 패키지가 **없다면** **퍼블릭** 레포지토리에서 패키지를 가져오고 **개발자 머신과 가장 가까운 레포지토리**에 저장하고
+퍼블릭 레포지토리와 가장 가까운 레포지토리에도 패키지를 저장한다. `개발자와 가까운 것과 외부 레포지토리와 가까운 것` 두 곳에 저장하게된다.
+중간 리포지토리에는 외부에서 가져온 패키지가 저장되지 않는다.
+
+**Domains**
+
+Upstream repositories와 연결하면서 외부 패키지를 캐싱하는 과정에서 한 패키지가 여러 레포지토리에 중복되어 저장되는 경우가 있다.
+이때 여러 레포지토리를 하나의 Domain으로 묶어서 패키지를 통합으로 관리하여 패키지 중복을 제거하고 레포지토리는 Domain Stroage에 패키지 참조만 가지게된다.
+물론 Upstream 연결은 그대로 사용할 수 있다. 또한 Upstream 레포지토리 **종속성을 풀링**하면 패키지 **참조**를 복사하기 때문에 레포지토리 간 **복사**가 빨라진다.
+
+동일한 KMS 키로 모든 내용을 암호화하기 때문에 여러 팀에서 동일한 Domain을 접근할 수 있다.
+그리고 레포지토리 액세스 정책을 정의하고 싶을 때 **도메인 리소스 기반 정책**을 정의하면 도메인 내의 모든 계정과 모든 레포지토리에 적용된다.
+누가 외부연결을 설정하고 수정하는 권한을 가질지 등 고급 규칙을 정의할 수 있다.
+
+## CodeGuru
+
+머신러닝 기반의 서비스로 `자동화된 코드 검토`와 `애플리케이션 성능 권장 사항`을 제공한다. 보통 개발자가 코드를 작성하면 다른 개발자가 코드리뷰를 진행하고, 배포 후 상태를 모니터링해야하는데 **CodeGuru**가 그런 역할을 수행한다.
+Github이나 CodeCommit에 코드를 푸시하면 **CodeGuru Reviewer**에서 정적 코드 분석으로 자동으로 코드를 분석하고 버그나 메모리 누수를 확인하고 실행 가능한 권장 사항을 제안한다.
+**CodeGuru Profiler**는 런타임 또는 프로덕션 중에 애플리케이션에 관한 가시성 또는 권장 사항을 제공한다. 따라서 Build&Test 시 CodeGuru Profiler가 비용이 높은 코드 줄을 감지하고 최적화하며 배포하고 애플리케이션의 성능과 비용 개선 사항을 식별해 코드에 직접 권장 사항을 제공한다.
+
+머신 러닝 기반의 자동 추론으로 CodeGuru Reviewer는 Commit을 보고 잘못된 코드 줄(버그나 보안 취약점, 메모리 누수, 입력값 검증 )을 알려준다.
+CodeGuru Profiler는 런타임에서 애플리케이션을 모니터링한다. 예를 들어 로깅 루틴에서 CPU를 과도하게 사용하는 이유를 확인한다. 런타임 분석을 통해 고드 비효율성을 식별 및 삭제하고 컴퓨팅 비용을 낮추고 어떤 객체가 메모리 공간을 많이 차지하는지 식별한다.
+
+### CodeGuru Agent
+
+CodeGuru Profiler는 agent로 작동한다. 이 agent의 설정으로 프로파일러를 미세 조정할 수 있다.
+자주 더 많이 agent가 코드를 분석하고 보고서를 작성하면 그 만큼 서버의 부하에 영향을 주기 때문에 서버 성능에 맞게 필요한 만큼 설정해야한다.
+
+- MaxStackDepth : profile에서 표시될 최대 함수 길이, 예를 들어 메서드 A가 B를 호출하고 B가 C를 호출할 때 총 깊이는 3이고, MaxStackDepth를 2로 설정하면 메서드 A와 B만 평가한다.
+- MemoryUsageLimitPercent : agent가 메모리를 몇 퍼센트까지 사용할 수 있는지
+- MinimumTimeForReportingInMilliseconds : 보고서 전송 간 최소 시간
+- RepotingIntervalInMililiseconds : profiling 완료에 관한 보고 빈도를 설정
+- **SamplingIntervalInMilliseconds** : 샘플을 profiling하는 데 사용되는 샘플링 간격, 이 값을 낮게하면 더 많은 샘플링을 얻게 되므로 호출되는 함수나 메서드를 더 많이 포착할 수 있다.
+
+## Cloud9
+
+클라우드 기반의 IDE, 브라우저에서 코드 편집기와 디버거 그리고 터미널까지 얻음. 세계 어디에서든 인터넷만 연결되면 작업할 수 있게한다.
+또한 팀원들에게 개발환경을 공유(페어 프로그래밍)할 수 있다. AWS SAM, Lambda와 통합하여 애플리케이션을 쉽게 빌드할 수 있다.

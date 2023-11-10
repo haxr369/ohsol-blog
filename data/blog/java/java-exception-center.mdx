@@ -1,0 +1,201 @@
+---
+title: 예외 처리 중앙화와 응답 규격화 (방법)
+date: 2023-11-10
+lastmod: 2023-11-10
+tags: ['java', 'spring', 'validation', 'exception']
+draft: false
+summary: 'Spring의 예외를 일관성 있게 처리하고 클라이언트에게 규격화된 응답하는 방법'
+---
+
+## 대표 이미지
+
+<img src="/static/images/java/java-exception-response.png" alt="예외처리 중앙화하여 응답" />
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 개요
+
+여기어때나 쿠팡 프로젝트를 하면서 **예외처리**를 위해 수 많은 try-catch-throw 구문을 작성하면서 이를 **중앙화**할 수 없을지 고민했다.
+또한 클라이언트는 **api** 마다 **다른** 규격의 **응답**을 받게되면서 이를 파싱하는데 사용되는 비용을 줄이고자 **응답**을 **규격화**하는 방법을 작성했다.
+
+<img src="/static/images/java/java-exception-extends.png" alt="예외 클래스 상속 관계" />
+
+위 그림을 따르면 예외 클래스는 **Checked Exception**과 **Unchecked Exception**로 구분할 수 있다. Checked Exception은 반드시 예외처리가 필요하고 확인 시점은 컴파일 단계다.
+하지만, Unchecked exception은 명시적 처리를 강제하지 않고 런타임에서 예외를 체크한다.
+
+## 예외 처리 방식
+
+웹 애플리케이션은 외부의 어떤 요청에 담긴 데이터를 처리하고 적절하게 응답해야한다. 하지만 예외가 발생한다면 애플리케이션이 어림짐작으로 예외를 처리해서 정상 상태의 응답을 하는 것 보다는
+클라이언트에게 어떤 예외가 발생했는지 전달해야한다. 이를 위해 각 레이어(Repository, Service,...)에서 발생한 예외를 엔드포인트 레벨인 Controller에게 전달해야한다.
+
+Spring에서 예외를 처리하는 방식은 크게 두가지가 있다.
+
+1. @(Rest)ControllerAdvice와 @ExceptionHandler를 통해 모든 컨트롤러의 예외를 처리 : @RestControllerAdvice를 사용하면 클라이언트에게 결과값을 JSON 형태로 반환할 수 있다.
+2. @ExceptionHandler를 통해 특정 컨트롤러의 예외를 처리
+
+## CustomExceptionHandler 만들기
+
+```java:CustomExceptionHandler.java
+// 글로벌 예외처리
+@RestControllerAdvice // Controller나 RestController가 적용된 빈에서 발생하는 예외를 잡아 처리
+@Slf4j
+public class CustomExceptionHandler {
+    @ExceptionHandler(value = {RuntimeException.class, NullPointerException.class}) //RuntimeException나 NullPointerException가 발생하는 예외가 발생하면 처리하는 메서드
+    public ResponseEntity<Map<String, String>> handlerException(RuntimeException e, HttpServletRequest request){
+        log.error("Advice 내 handleException 호출, {} {}", request.getRequestURL(), e.getMessage());
+        // 클라이언트에게 보낼 응답 메세지 만들기
+        HttpHeaders httpHeaders = new HttpHeaders();
+        HttpStatus httpStatus = HttpStatus.BAD_REQUEST;
+        Map<String, String> map = new HashMap<>();
+        map.put("error type", httpStatus.getReasonPhrase());
+        map.put("code","400");
+        map.put("message", e.getMessage());
+        return new ResponseEntity<>(map, httpHeaders,httpStatus);
+    }
+}
+```
+
+1. `@RestControllerAdvice`는 Controller나 RestController가 적용된 빈에서 발생하는 예외를 잡아 처리함을 의미
+2. `@ExceptionHandler`는 value 안에 배열로 정의된 예외들이 발생하면 해당 메서드를 실행시키도록함.
+3. map으로 예외 반환 값을 json에 넘기고, httpHeader와 httpStatus를 모두 `ResponseEntity`로 묶어서 응답한다.
+   클라이언트는 Map 객체의 값을 아래와 같이 json으로 받게된다.
+   ```json:map_response.json
+   {
+        "code": "400",
+        "error type": "Bad Request",
+        "message": "getRuntimeException 호출"
+   }
+   ```
+
+### Exception의 우선 순위
+
+<img src="/static/images/java/java-exception-higher.png" alt="예외 우선 순위" />
+
+위 그림을 보면 하위의 클래스인 `NullPointerException.class`의 예외처리 핸들러가 더 우선순위를 가지게된다.
+또한 동일한 예외를 처리하더라고 ExceptionHandler의 위치에 따라 우선순위가 달라질 수 있다. 항상 컨트롤러 안에 작성된 ExceptionHandler가 글로벌로 작성된 ExceptionHandler에 우선한다.
+
+## 커스텀 예외
+
+커스텀 예외를 사용하면 예외의 이름만으로 어떤 예외 상황인지 알 수 있다. 표준 예외를 상속받은 커스텀 예외들은 개발자가 **코드**로 관리하기 때문에
+책임 소재를 애플리케이션 내부로 가져올 수 있고, 동일한 예외 상황이 발생할 경우 예외처리를 중앙화하여 상황에 맞는 예외 코드를 적용할 수 있다.
+
+```java:CustomResponseStatus.java
+@Getter
+public enum CustomResponseStatus {
+    SUCCESS(true, HttpStatus.OK, "요청에 성공하였습니다."),
+    NO_CONTENT(true, HttpStatus.NO_CONTENT, "요청에 성공했지만, 컨텐츠는 없습니다."),
+    POST_USERS_EMPTY_EMAIL(false, HttpStatus.BAD_REQUEST, "이메일을 입력해주세요."),
+    // ...
+    DELETE_FAIL_PRODUCT(false, HttpStatus.INTERNAL_SERVER_ERROR, "상품 삭제 실패"),
+    DELETE_FAIL_IMAGE(false, HttpStatus.INTERNAL_SERVER_ERROR, "이미지 삭제 실패");
+
+    private final boolean isSuccess;
+    private final HttpStatus code;
+    private final String message;
+
+    private CustomResponseStatus(boolean isSuccess, HttpStatus code, String message) {
+        this.isSuccess = isSuccess;
+        this.code = code;
+        this.message = message;
+    }
+}
+```
+
+Http Status를 커스텀 예외 클래스에 포함시키면 [위 ExceptionHandler](/blog/spring/spring-exception-center#customexceptionhandler-만들기)처럼 핸들러 안에서 선언해서 사용하는 것이 아닌
+예외클래스만 전달받으면 그 안에 내용이 포함돼 있는 구조로 설계할 수 있다. 메세지 만드는 것도 추상화를 할 수 있는 것이다.
+
+```java:CustomException.java
+public class CustomException  extends RuntimeException{
+
+    private CustomResponseStatus status;
+    public BaseException(CustomResponseStatus status) {
+        super(status.getMessage());
+        this.printStackTrace();
+        this.status = status;
+    }
+    public CustomResponseStatus getStatus() {
+        return this.status;
+    }
+    public void setStatus(final CustomResponseStatus status) {
+        this.status = status;
+    }
+}
+```
+
+종합하면 비즈니스 로직이나 컨트롤러에서 발생한 예외를 **CustomException**으로 발생시키고, 그 예외 코드나 메세지는 **CustomResponseStatus**로 중앙화하여 관리할 수 있다.
+이로써 프로젝트를 **개발**하면서 발생하는 **예외와 메세지**는 **통일성** 있게 관리할 수 있다.
+
+## 공통 응답
+
+웹 애플리케이션이 **예외**나 **컨텐츠**를 클라이언트에게 **응답**할 때 **공통적인 형식**을 가지고 응답하게 되면 클라이언트는 응답의 형태를 **신경쓰지 않고**
+오로지 **뷰**에만 집중할 수 있게된다. 그러기 위해선 요청의 성공과 실패를 알 수 있도록하고 메세지, code, 및 result를 포함해서 출력한다.
+정리하면 성공이나 예외에 대한 **응답**을 **규격화**된 형태로 감싸서 응답하는 것이다.
+
+```java:BaseResponse.java
+@JsonPropertyOrder({"is_success", "code", "message", "result"})
+@Getter
+public class BaseResponse<T> {
+    // Http Response의 일관성을 높이자
+    @JsonProperty("is_success") // json 객체 내의 Key 값 설정
+    private final Boolean isSuccess;
+    private final String message;
+    private final HttpStatus code;
+    @JsonInclude(JsonInclude.Include.NON_NULL) // json을 만들 때 null인 객체는 제외한다.
+    private T result;
+
+    public BaseResponse(T result) {
+        // 응답에 성공하고 컨텐츠가 있는 경우, create, update, read 경우
+        this.isSuccess = BaseResponseStatus.SUCCESS.isSuccess();
+        this.message = BaseResponseStatus.SUCCESS.getMessage();
+        this.code = BaseResponseStatus.SUCCESS.getCode();
+        this.result = result;
+    }
+    public BaseResponse(BaseResponseStatus status) {
+        // 예외 발생한 경우
+        this.isSuccess = status.isSuccess();
+        this.message = status.getMessage();
+        this.code = status.getCode();
+    }
+}
+```
+
+위 `BaseResponse`를 확인하면 클라이언트는 isSuccess를 확인하고 **false** 일 경우 message를 화면에 띄운다던가 별도의 예외 처리 로직을 동작시킬 수 있다.
+또한 정상적인 응답이라면 result에 객체가 들어가기 때문에 클라이언트는 result만 확인하면된다.
+
+## 예외 처리 통합
+
+**CustomException**, **CustomResponseStatus**, **CustomExceptionHandler** 그리고 **BaseResponse**를 종합하면 아래와 같이 예외처리를 중앙화하여 응답할 수 있다.
+
+<img src="/static/images/java/java-exception-response.png" alt="예외처리 중앙화하여 응답" />
+
+```java:CustomExceptionHandler.java
+@RestControllerAdvice // Controller나 RestController가 적용된 빈에서 발생하는 예외를 잡아 처리
+@Slf4j
+public class CustomExceptionHandler {
+
+    // 예외가 발생하면 status를 받아서 공통 형식으로 출력
+    @ExceptionHandler(value = {BaseException.class})
+    public BaseResponse baseHandlerException(BaseException baseException){
+        return new BaseResponse(baseException.getStatus());
+    }
+    // 특정한 예외 같은 것은 직접 주입할 수 있다.
+    @ExceptionHandler(value = {MethodArgumentNotValidException.class})
+    public BaseResponse methodArgumentNotValidHandlerException(MethodArgumentNotValidException m){
+        return new BaseResponse(BaseResponseStatus.POST_INVAILD_ARGUMENT);
+    }
+}
+```
+
+위 CustomExceptionHandler는 예외처리를 중앙에서 처리하고 공통 형태의 **BaseResponse**로 넘겨주는 역할을 한다.
+또한 비즈니스 로직 같이 **사용자**가 예외를 **직접 발생**시키지 **못**하는 경우 `methodArgumentNotValidHandlerException`처럼
+**ExceptionHandler**를 설정하여 **제어할 수 없는 예외**를 처리하고 규격화된 응답을 클라이언트에게 **제공**할 수 있다.
+
+```json:httpResponse.json
+{
+    "isSuccess": false,
+    "code": "BAD_REQUEST",
+    "message": "올바른 입력 형식이 아닙니다."
+}
+```

@@ -1,0 +1,50 @@
+---
+title: 예외 처리 중앙화와 응답 규격화 (적용)
+date: 2023-11-10
+lastmod: 2023-11-10
+tags: ['java', 'spring', 'validation', 'exception', 'project']
+draft: false
+summary: '여기어때 프로젝트에 여러 예외들을 중앙화하고 규격화된 응답으로 처리하는 방법'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 개요
+
+현재 여기어때 프로젝트는 **성공**에 대한 응답 **규격**을 **API Design Document**에 작성하고 **프론트** 개발자와 **소통**했었다.
+하지만, 서버에서 **예외**가 발생했을 때에 대한 **응답 규격을 만들지 않았고**, 서버에 **예외**가 발생할 때마다 프론트 개발자는 **원인을 알고자**
+계속 서버 개발자에게 무슨 일인지 **물어보는 비효율적인 작업**을 반복했었다.
+
+이번 포스팅에는 [예외 처리 중앙화와 응답 규격화 (방법)](/blog/java/java-exception-center)을 바탕으로 기존 **상품**과 **유저** 관련 예외처리를 **규격화**해서 응답하는 과정을 작성할 것이다.
+아래는 프로젝트의 도메인에 따라 예외를 다르게 정의하고 응답을 규격화하여 클라이언트에게 응답하는 과정을 그린 도식이다.
+
+<img src="/static/images/project/project-exception-center.png" alt="프로젝트 예외 처리 도식" />
+
+프로젝트에서 중앙화할 예외의 도메인은 다음과 같다.
+
+1. Common
+   ```
+   - Request Body 바인딩 과정에서 유효성 검사
+   - JPA 표준 예외 (PersistenceException)
+   - NullPointException
+   ```
+2. Product
+   ```
+   - 존재하지 않는 상품
+   - 존재하지 않는 숙소 타입
+   ```
+3. User
+   ```
+   - 인증되지 않은 유저 요청
+   - 권한 없는 유저 요청
+   ```
+
+### DomainResponseStatus
+
+어떤 에러 상태든 무조건 **CustomResponseStatus**에서 관리하여 모든 서버 개발자가 동일한 예외에 대해 동일한 에외 상태와 메세지를 출력하도록 한다.
+성공 처리나 유효성 검사처럼 공통적인 Status와 상품 관련 또는 유저 관련 Status는 관리를 위해 분리될 필요가 있다. 따라서 아래 이미지처럼 예외 처리 클래스가 관리된다.
+각 예외는 도메인에 맞는 StatusCode를 사용한다.
+
+###
