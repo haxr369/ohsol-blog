@@ -32,7 +32,9 @@ public Page<AccommodationResDto> getReq(@PathVariable("type") String type,
 }
 ```
 
-위 코드와 같이 SearchReqDto를 @ModelAttribute로 바인딩해서 사용하려고 했다. SearchReqDto는 아래와 같다.
+위 코드와 같이 **쿼리 스트링**으로 들어오는 **파라미터**들을 SearchReqDto로 **바인딩**하려고 했다.
+하지만, searchReqDto 객체가 쿼리 스트링에 **입력**한 값이 아닌 **기본** 값을 가지고 **생성**되는 문제가 있었다.
+즉 쿼리 스트링의 바인딩이 되지 않는 것이다.
 
 ```java:SearchReqDto.java
 @Getter
@@ -53,11 +55,11 @@ public class SearchReqDto {
 }
 ```
 
-위와 같은 코드를 바탕으로 아래처럼 `GET` 요청을 보냈지만, 정작 log에서 region은 서울로 찍힌다.
-즉 쿼리 파라미터 입력 값이 바인딩되지 않고, 기본 값을 그대로 사용해서 DTO 객체가 생성된 것이다.
+위와 같은 코드를 바탕으로 아래처럼 `region`으로 **인천**을 작성하고 `GET` 요청을 보냈지만, 정작 log에서 region은 **서울**로 찍힌다.
+즉 쿼리 파라미터 입력 값이 바인딩되지 않고, 기본 값을 그대로 사용해서 DTO 객체가 생성된 것이다.ㅁㅁ
 
 ```
-http://localhost:8080/api/v2/product/search/HOTEL?sel_date=2023-11-08&sel_date2=2023-11-08&min_price=0&max_price=500000&keywords=1
+http://localhost:8080/search/HOTEL?region=인천&sel_date=2023-11-08&sel_date2=2023-11-08&min_price=0&max_price=500000
 ```
 
 ## ModelAttribute가 바인딩하는 과정

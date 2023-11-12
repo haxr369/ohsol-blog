@@ -107,9 +107,9 @@ Department를 찾는 쿼리를 보낸다면, 첫번째 쿼리에서 Department�
 
 ## FETCH JOIN으로 ManyToOne N+1 해결하기
 
-**FETCH JOI**를 사용하면 여러 테이블을 JPQL이 join하고 한 쿼리로 원하는 값을 불러올 수 있게된다.
+**FETCH JOIN**를 사용하면 여러 테이블을 JPQL이 join하고 한 쿼리로 원하는 값을 불러올 수 있게된다.
 일반적인 join과 차이점은 일반적인 join은 `Product` 같이 Select 대상의 필드 값만 영속성 컨텍스트에 저장하게되어 Join 대상인 `Seller`의 정보는 영속성에 넣지 않게된다.
-하지만, FETCH JOI은 전부 넣어서 가져오기 때문에 join 대상도 사용할 때는 `FETCH JOI`을 사용하자.
+하지만, FETCH JOIN은 전부 넣어서 가져오기 때문에 join 대상도 사용할 때는 `FETCH JOIN`을 사용하자.
 
 ```java:ProductRepository.java
 public interface ProductRepository extends JpaRepository<Product, Long> {

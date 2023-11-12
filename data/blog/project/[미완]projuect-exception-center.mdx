@@ -27,7 +27,6 @@ summary: '여기어때 프로젝트에 여러 예외들을 중앙화하고 규�
 1. Common
    ```
    - Request Body 바인딩 과정에서 유효성 검사
-   - JPA 표준 예외 (PersistenceException)
    - NullPointException
    ```
 2. Product
@@ -37,14 +36,142 @@ summary: '여기어때 프로젝트에 여러 예외들을 중앙화하고 규�
    ```
 3. User
    ```
-   - 인증되지 않은 유저 요청
-   - 권한 없는 유저 요청
+   - 존재하지 않는 유저 요청
    ```
 
-### DomainResponseStatus
+### [Domain]ResponseStatus
 
 어떤 에러 상태든 무조건 **CustomResponseStatus**에서 관리하여 모든 서버 개발자가 동일한 예외에 대해 동일한 에외 상태와 메세지를 출력하도록 한다.
 성공 처리나 유효성 검사처럼 공통적인 Status와 상품 관련 또는 유저 관련 Status는 관리를 위해 분리될 필요가 있다. 따라서 아래 이미지처럼 예외 처리 클래스가 관리된다.
 각 예외는 도메인에 맞는 StatusCode를 사용한다.
 
-###
+### [Domain]Exception
+
+비즈니스 로직이나 컨트롤러에서 **개발자**가 예외처리를 통해 **직접** **예외**를 발생시키며 **[Domain]ResponseStatus**을 이용해서 예외코드와 메시지를 응답한다.
+
+## CommonExceptionHandler
+
+개발자가 아닌 **프레임워크**나 **라이브러리**가 발생시키는 **예외**를 처리하며 **개발자**는 어떤 **예외**를 어떤 **응답**을 내놓을지 **결정**할 수 있다.
+이번 프로젝트에서는 개발자가 **직접 설정**한 예외처리를 일으키고 그 결과를 확인 및 예외를 자동처리하는 **handler**를 만들어볼 예정이다.
+
+```java:CommonExceptionHandler.java
+@RestControllerAdvice // Controller나 RestController가 적용된 빈에서 발생하는 예외를 잡아 처리
+@Slf4j
+public class CommonExceptionHandler {
+
+    // 예외가 발생하면 status를 받아서 공통 형식으로 출력
+    @ExceptionHandler(value = {ProductException.class})
+    public BaseResponse productHandlerException(ProductException productException){
+        return new BaseResponse(productException.getStatus());
+    }
+
+    @ExceptionHandler(value = {MethodArgumentNotValidException.class})
+    public BaseResponse methodArgumentNotValidHandlerException(MethodArgumentNotValidException m){
+        // 특정한 예외 같은 것은 직접 주입할 수 있다.
+        return new BaseResponse(CommonResponseStatus.POST_INVAILD_ARGUMENT);
+    }
+
+    @ExceptionHandler(value = {RuntimeException.class}) //RuntimeException나 NullPointerException가 발생하는 예외가 발생하면 처리하는 메서드
+    public BaseResponse runtimeHandlerException(RuntimeException e, HttpServletRequest request){
+        log.error("Advice 내 handleException 호출, {} {}", request.getRequestURL(), e.getMessage());
+        return new BaseResponse(CommonResponseStatus.Null_POINT_EXCEPTION);
+    }
+}
+```
+
+## 예외처리 실험
+
+1. 존재하지 않는 값 DB에서 읽기 (ProductException)
+
+상세 숙소 검색을 위해 존재하지 않는 **숙소 id** 3057979869를 요청해서 **Accommodation not found**를 발생시켰다.
+그 결과 아래와 같이 log와 Http Response가 발생했다.
+
+```
+// log
+bestChoicebackend.spring.common.exceptions.ProductException: 존재하지 않는 숙소입니다.
+	at bestChoicebackend.spring.service.AccommodationService.lambda$findById$0(AccommodationService.java:38)
+	at java.base/java.util.Optional.orElseThrow(Optional.java:403)
+
+// Http Response
+{
+    "isSuccess": false,
+    "code": "NOT_FOUND",
+    "message": "존재하지 않는 숙소입니다."
+}
+```
+
+2. 존재하지 않는 유저로 좋아요 누르기
+
+```kotlin:UserLikeService.kt
+class UserLikeService(
+    private val userLikeRepository: UserLikeRepository,
+    private val userRepository: UserRepository,
+    private val accommodationRepository: AccommodationRepository
+) {
+
+    fun addUserLike(userLikeDto: UserLikeDto) :UserLikeDto {
+        val user = userRepository.findById(userLikeDto.userId)
+            .orElseThrow {UserException(UserResponseStatus.USER_NOT_FOUND)}
+        val accommodation = accommodationRepository.findById(userLikeDto.accommodationId)
+            .orElseThrow { EntityNotFoundException("Not found") }
+        val userLike = UserLike().apply {
+            this.userId = user
+            this.accommodationId = accommodation
+        }
+        val savedLike = userLikeRepository.save(userLike)
+        return UserLikeDto(savedLike.userLikeId, savedLike.userId.userId, savedLike.accommodationId.accommodationId)
+    }
+}
+```
+
+위 UserLikeService에서 `addUserLike`는 클라이언트가 제공한 **좋아요** 정보를 바탕으로 DB에서 **유저**와 **숙소**를 얻는다.
+이번 상황은 클라이언트의 userId가 존재하지 않는 Id일 경우 아래와 같이 **log**와 **Http Response**가 발생한다.
+
+```
+// log
+bestChoicebackend.spring.common.exceptions.UserException: 회원이 아닌 유저입니다.
+// http Response
+{
+    "isSuccess": false,
+    "code": "UNAUTHORIZED",
+    "message": "회원이 아닌 유저입니다."
+}
+```
+
+### 예외 상황 로깅하기
+
+위처럼 명확하게 어떤 예외상황인지 알면 예외를 처리하기 쉽겠지만 예측하지 못한 부분에서 예외가 발생해서 **RuntimeException**이 발생할 경우 **runtimeHandlerException**이 실행된다.
+하지만 전처럼 단순히 **code**와 **message(Null_POINT_EXCEPTION)** 만 보낸다면
+예외를 **포괄적**으로 처리하게 되고 정확한 **원인 파악**을 **어렵게** 한다. 따라서 **Exception**에서 `printStackTrace`를 실행시켜서 아래와 같이 **runtimeHandlerException**은 더 많은 정보를 **log**에 담아서 출력한다.
+
+```:무수히 많이 출력된 System.err
+bestChoicebackend.spring.common.exceptions.UserException: 회원이 아닌 유저입니다.
+	at bestChoicebackend.spring.service.UserLikeService.addUserLike$lambda$0(UserLikeService.kt:24)
+	at java.base/java.util.Optional.orElseThrow(Optional.java:403)
+	at bestChoicebackend.spring.service.UserLikeService.addUserLike(UserLikeService.kt:24)
+	at bestChoicebackend.spring.controller.UserLikeController.addUserLike(UserLikeController.kt:24)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	...
+
+```
+
+위와 같이 단순히 `printStackTrace`를 이용해서 로깅하면 **StackTrace** 상의 모든 메소드의 에러를 출력시키기 때문에
+정확한 원인 지점을 알기 어렵고 출력하는데 많은 리소스가 발생한다. 그렇기 때문에 아래와 같이 `handlerException`에서 **log**를 작성하면 더 깔끔하게 원인의 발생지점을 알 수 있다.
+
+```java.CommonExceptionHandler.java
+@ExceptionHandler(value = {RuntimeException.class}) //RuntimeException나 NullPointerException가 발생하는 예외가 발생하면 처리하는 메서드
+    public BaseResponse handlerException(RuntimeException e, HttpServletRequest request){
+        log.error("Advice 내 handleException 호출, {} {} {}", request.getRequestURL(), e.getMessage(), e.getStackTrace()[0]);
+        return new BaseResponse(CommonResponseStatus.Null_POINT_EXCEPTION);
+    }
+```
+
+위와 같이 **ExceptionHandler**가 있을 때 아래처럼 깔끔한 log가 어디에서 예외가 발생했는지 알려준다.
+
+```
+2023-11-12T16:18:49.041+09:00 ERROR 7892 --- [nio-8080-exec-1] b.s.c.handler.CommonExceptionHandler     :
+ Advice 내 handleException 호출, http://localhost:8080/api/v1/my/like 회원이 아닌 유저입니다.
+ bestChoicebackend.spring.service.UserLikeService.addUserLike$lambda$0(UserLikeService.kt:24)
+```
+
+**너무 깔끔한 로그가 정확한 원인을 찾아준다!!!**

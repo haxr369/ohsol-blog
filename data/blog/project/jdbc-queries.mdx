@@ -52,6 +52,9 @@ JdbcTemplate에서 위 쿼리를 사용하려면 실제 들어가는 `3`,`2023-1
 ## Repository
 
 ```java:ProductDao.java
+@Repository
+@RequiredArgsConstructor // jdbcTemplate 의존성 추가
+@Slf4j
 public class ProductDao {
     private final JdbcTemplate jdbcTemplate;
     private final RowMappers rowMappers;
@@ -59,42 +62,47 @@ public class ProductDao {
     private String createParameterPlaceholders(List<Integer> keywords) {
         StringBuilder placeholders = new StringBuilder();
         for (int i = 0; i < keywords.size(); i++) {
-            placeholders.append(keywords.get(i));
+            placeholders.append("?");
             if (i < keywords.size() - 1) {
-                placeholders.append(",");
+                placeholders.append(", ");
             }
         }
+        //log.info("keyword string : "+placeholders);
         return placeholders.toString();
     }
 
-    public List<AccommodationResDto> checkProduct(int type, SearchReqDto searchReqDto) {
+    public List<AccommodationResDto> checkProduct(String type, SearchReqDto searchReqDto) {
         // jdbc 쿼리 작성 요령 중간에 if문 때문에 문제가 생기는듯!
         // createParameterPlaceholders에 ?를 붙여놓고 값을 입력하지 않았다.
         String BaseQuery = "SELECT a.* FROM accommodation a " +
                 "LEFT JOIN accommodation_keyword ak ON a.accommodation_id = ak.accommodation_id " +
-                "WHERE a.type = ? ";
+                "WHERE a.type = ? " +
+                "AND a.region = ? ";
 
         if(!searchReqDto.getKeywords().isEmpty()){
-            log.info("keywords : "+createParameterPlaceholders(searchReqDto.getKeywords()));
-            BaseQuery += " AND keyword_id IN (" + createParameterPlaceholders(searchReqDto.getKeywords()) + ") ";
-        }
+            String keywordPlaceholders = createParameterPlaceholders(searchReqDto.getKeywords());
+            BaseQuery += " AND keyword_id IN (" + keywordPlaceholders + ") ";
+            }
 
-        BaseQuery +=   "GROUP BY a.accommodation_id " +
-                "HAVING COUNT(DISTINCT keyword_id) >= "+ searchReqDto.getKeywords().size() +
-                " AND a.price BETWEEN ? AND ? " +
+        BaseQuery += "GROUP BY a.accommodation_id " +
+                "HAVING COUNT(DISTINCT keyword_id) >= ? " +
+                "AND a.price BETWEEN ? AND ? " +
                 "AND a.accommodation_id NOT IN (" +
                 "SELECT accommodation_id FROM reserve " +
-                "WHERE NOT ((DATE_FORMAT(reserve_date, '%Y-%m-%d') >= ?) " +
-                "AND (DATE_FORMAT(end_date, '%Y-%m-%d') <= ? )));";
+                "WHERE NOT (DATE_FORMAT(reserve_date, '%Y-%m-%d') >= ? " +
+                "AND DATE_FORMAT(end_date, '%Y-%m-%d') <= ?));";
         try{
-            Object[] ProductSearchObj = new Object[]{
-                    type,
-                    searchReqDto.getMin_price(),
-                    searchReqDto.getMax_price(),
-                    Date.valueOf(searchReqDto.getSel_date2()),
-                    Date.valueOf(searchReqDto.getSel_date())
-            };
-            return jdbcTemplate.query(BaseQuery, rowMappers.accommodationRowMapper(), ProductSearchObj);
+            List<Object> parameters = new ArrayList<>();
+            parameters.add(type);
+            parameters.add(searchReqDto.getRegion());
+            parameters.addAll(searchReqDto.getKeywords());
+            parameters.add(searchReqDto.getKeywords().size());
+            parameters.add(searchReqDto.getMin_price());
+            parameters.add(searchReqDto.getMax_price());
+            parameters.add(searchReqDto.getSel_date2());
+            parameters.add(searchReqDto.getSel_date());
+
+            return jdbcTemplate.query(BaseQuery, rowMappers.accommodationRowMapper(), parameters.toArray());
         }
         catch (RuntimeException e){
             throw new BaseException(BaseResponseStatus.DATABASE_ERROR);
@@ -105,7 +113,7 @@ public class ProductDao {
 ```
 
 만약 클라이언트가 키워드를 설정하지 않고 요청했을 경우 키워드를 통한 `WHERE절`을 사용하면 안되기 때문에 중간에 if문으로 쿼리를 제어할 수 있었다.
-쿼리가 복잡하고 필요한 변수가 많기 때문에 Object 리스트에 쿼리에 들어갈 변수를 **순서대로** 작성했다.
+쿼리가 복잡하고 필요한 변수가 많기 때문에 Object 리스트에 쿼리에 들어갈 변수를 **순서대로** 작성했다. 위와 같이 **문자열**로 쿼리의 **인자**를 **순서대로** 넣고, 쿼리 **결과**를 **rowMapper**로 **테이블**과 **객체**를 **맵핑**해야하는 것은 분명 jdbc의 단점이다.
 
 ## Service
 
