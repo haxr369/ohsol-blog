@@ -1,0 +1,154 @@
+---
+title: AWS CLI, SDK, IAM 역할 및 정책
+date: 2023-11-14
+lastmod: 2023-11-14
+tags: ['AWS', 'cli', 'sdk', 'iam', 'DVA-C02']
+draft: false
+summary: 'AWS의 CLI, SDK, IAM 역할 및 정책을 정리'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## EC2 Instance Metadata (IMDS)
+
+IAM Role 없이 EC2 자신에 대해 알 수 있는 방번. `http://169.254.169.254/lastest/meta-data` 와 같은 특정 url을 통해 EC2는 자기 자신에 대해 알 수 있다.
+메타 데이터를 통해 Public I, Private IP 등 심지어 **IAM 역할 이름**과 **자격증명 정보**(credential)도 **조회**할 수 있다. 하지만 **IAM 정책은 알 수 없다.**
+
+- Metadata : EC2 인스턴스의 정보
+- Userdata : EC2 인스턴스 실행 스크립트
+
+사용자들의 IAM 정책을 비교하기 위해선 `AWS Policy Simulator`에서 차이점을 이해할 수 있다.
+
+### 버전에 따른 변화
+
+1. IMDS V1 : url에 접근해서 바로 사용할 수 있다. (보안 약함)
+2. IMDS V2 : Metadata를 얻기위해 2가지 단계를 거쳐야한다.
+   - PUT 요청을 통해 Session Token을 얻어야한다.
+   - header에 token을 넣고 Metadata에 요청
+
+## 다중 계정에서 CLI 사용법
+
+터미널에서 `aws configure`을 작성하면 **AWS Access Key ID** 같은 **기본** 자격증명을 설정할 수 있다.
+만약 사용하는 AWS 계정이 여러개 있고, 이에 따른 자격증명을 저장하려면 어떻게해야할까?
+
+`aws configure --profile [프로필 이름]`과 같이 원하는 프로필 이름에 자격증명을 별도로 관리할 수 있다.
+
+또한 `aws s3 ls`와 같이 **S3**의 버킷을 나열할 수 있는 명령어도 뒤에 `--profile [프로필 이름]`을 붙여서 해당 계정의
+S3 버킷 리스트를 볼 수 있다.
+
+## MFA(다요소 인증) with CLI
+
+이전 [AWS IAM 및 CLI](https://ohsol-blog.vercel.app/blog/aws/aws-iam#aws-cli)에서 Management console에 이름과 비밀번호에 추가적으로 MFA를 적용할 수 있다는 것을 포스팅했었다.
+
+이번에는 CLI에도 MFA를 설정하는 방법이다.
+
+CLI에서 MFA를 사용하려면 임시 세션을 얻어야하고, API를 호출하기 위해선 **STS GetSessionToken**으로 얻은 토큰을 사용해야한다.
+토큰을 얻는 방법은 아래와 같다.
+
+```sh:GetSessionToken.sh
+// 문법
+aws sts get-session-token --serial-number [MFA 장치 시리얼 넘버] --token-code [MFA 장치로 얻은 코드] --duration-seconds 3600
+// 예시
+aws sts get-session-token \
+    --duration-seconds 900 \
+    --serial-number "YourMFADeviceSerialNumber" \
+    --token-code 123456
+
+// 요청 응답
+{
+    "Credentials": {
+        "AccessKeyId": "ASIAIOSFODNN7EXAMPLE",
+        "SecretAccessKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYzEXAMPLEKEY",
+        "SessionToken": "AQoEXAMPLEH4aoAH0gNCAPyJxz4BlCFFxWNE1OPTgk5TthT+FvwqnKwRcOIfrRh3c/LTo6UDdyJwOOvEVPvLXCrrrUtdnniCEXAMPLE/IvU1dYUg2RVAJBanLiHb4IgRmpRV3zrkuWJOgQs8IZZaIv2BXIa2R4OlgkBN9bkUDNCJiBeb/AXlzBBko7b15fjrBs2+cTQtpZ3CYWFXG8C5zqx37wnOE49mRl/+OtkIKGO7fAE",
+        "Expiration": "2020-05-19T18:06:10+00:00"
+    }
+}
+```
+
+MFA 장치 시리얼 넘버와 MFA를 통해 얻은 코드를 입력해서 토큰을 요청하면 **AccessKeyId**, **SecretAccessKey**, 그리고 **SessionToken** 와 같은 `임시적` 자격증명 데이터가 응답된다.
+
+## AWS SDK
+
+SDK란 Software Development kit의 약자로 AWS가 제공하는 서비스를 이용해서 개발을 쉽게하게하기 위해서 만들어졌다.
+AWS SDK를 사용할 때 **주의할 점**은 별도로 **Region**을 지정하지 않으면 자동으로 `us-east-1`으로 설정되어 API를 호출한다.
+
+## AWS Limits (Quotas, 할당)
+
+**API Rate Limits**
+API 요청을 과다하게 하는 것을 막기위해 **API Limits**가 존재한다. 예를 들어 EC2에 API 호출은 초당 100회까지 가능하고 S3에 **GetObject**는 초당 5500GET이 가능하다.
+일시적인 에러에 대응하기 위해 **지수적 백오프**(Exponential Backoff)가 가능하다. 하지만, 지속적 에러일 경우 API 호출량이 많기 때문이라서 **API 제한 증가**를 요청해서 계속 사용하도록 한다.\
+**Service Limits(Quotas)**
+온디멘드 표준 인스턴스는 최대 1152개의 가상 CPU를 사용할 수 있으며, 더 많이 사용하고 싶을 때는 **opening a ticket**을 통해 서비스 한도 증가를 요청할 수 있고,
+**Service Quotas API**를 이용해서 프로그램에서 요청할 수 있다.
+
+### 지수적 백오프(Exponential Backoff)
+
+**지수적 백오프**가 발생하는 이유는 **조절 오류**가 발생한 경우이다. **조절 오류(ThrottlingException)**는 단기간에 API 호출이 많아진 경우이다. 따라서 일시적인 오류의 원인은 보통 **조절 오류**이며, 그 답은 **지수적 백오프**이다.
+
+AWS SDK API를 사용하면 이미지 재시도 매커니즘은 적용되어 있다. 하지만 AWS API를 직접 사용한다면 개발자 자체의 **지수적 백오프** 로직을 추가해야한다.
+
+**지수적 백오프를 수행해야하는 경우**
+
+- 자체 SDK를 실행하는 경우
+- 자체 사용자 정의 HTTP 호출을 사용하는 경우
+- 5xx인 서버 에러가 발생하는 경우
+
+다만 4xx 같은 클라이언트 에러에서는 지수적 백오프를 실행해서는 안된다. 서버의 문제가 아닌 클라이언트가 잘못된 요청을 보낸 것이기 때문에 동일한 요청을 재시도하면 동일한 오류가 계속 발생할 것이다.
+
+**지수적 백오프 원리**
+지수적 백오프는 동일한 요청을 성공할 때까지 **반복 요청**하고 요청과 요청 사이 **대기 시간**을 **지수적**으로 늘리는 것이다.
+예를 들어 1번째 요청이 실패하면 1초 기다리고 2번째 요청, 2번째 요청 실패하면 2초 기다리고, 3번째 요청 실패하면 4초 기다리고를 반복한다.
+대기시간을 점점 길게 가지기 때문에 서버의 부하는 줄어들고 **API 호출 제한**의 해결책이 된다.
+
+## AWS CLI Credentials Provider Chain
+
+CLI로 API 호출할 때 자격증명 데이터를 요청한다. 그 때 찾는 과정은 다음과 같다.ㅇ
+아래 순서에 따라 우선순위가 나뉘어진다.
+
+1. **Command line options** : **--region**, **accessKeyId**와 같이 명령을 작성할 때 붙이는 **옵션**
+2. **Environment variables** : AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN과 같은 **환경변수**
+3. **CLI credentials file** : aws configure로 `~/.aws/credentials`에 작성한 cli 자격증명 파일에 작성된 정보
+4. **CLI config file** : aws configure로 `~/.aws/config`에 작성한 cli 자격증명 파일에 작성된 정보
+5. **Container credentials** : ECS 작업의 경우에는 컨테이너 자격 증명을 확인
+6. **Instance Profile credential** : EC2 인스턴스 프로파일 자격 증명을 확인
+
+**Java SDK는 다음과 같은 순서로 자격증명을 확인한다.**
+
+1. **Java system properties**
+2. **Environment variables** : AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+3. **default credential profiles file** : 컴퓨터 전체에 적용되는 `~/.aws/credentials`, `~/.aws/config` 파일
+4. **ECS Container credentials**
+5. **Instance Profile credential**
+
+### 사용사례
+
+EC2 인스턴스에서 애플리케이션을 배포하고 IAM 유저로 S3 API를 호출하는 상황. 이때 IAM 유저는 S3FullAccess 권한을 가지고 있다.
+또한 EC2는 S3에 접근할 수 있는 IAM 역할 및 EC2 인스턴스 프로파일을 정의하고 있다.
+
+EC2의 IAM 역할이 **Best practies**처럼 필요 최소 권한인 한 버킷에 권한만 가지고 있더라도 EC2는 모든 버킷에 액세스할 수 있다.
+그 이유는 **Credentials Provider Chain**에서 **인스턴스 프로파일**은 **환경변수**에 **후순위**이기 때문이다.
+
+위 문제를 해결하기 위해선 **환경변수**를 제거하여 **인스턴스 프로파일**의 자격증명을 사용하도록 한다.
+
+### 모법 사용사례
+
+1. **무조건 자격증명을 코드에 사용하면 안된다.**
+2. AWS에서는 IAM 역할을 최대한 많이 사용해야한다. EC2 인스턴스에는 EC2 인스턴스 역할을, ECS task에는 ECS 역할을 **각각** 부여해야한다.
+3. 터미널에서 자격증명을 설정할때는 **환경변수**나 **named prodiles**를 사용해아한다.
+
+## API 요청 방법
+
+AWS API를 호출할 때는 access key나 secret key 같은 자격증명을 함께 보내야한다. 그래야 aws가 누가 보낸 요청인지 판단하고 인증하기 때문이다.
+
+물론 S3의 퍼블릭 객체를 읽을 때는 서명이 필요 없지만, SDK나 CLI를 사용할 때 API 호출은 서명이 필요하다.
+다만, SDK와 CLI는 위에 **CLI Credentials Provider Chain**에 따라 서명을 얻고 자동으로 API 요청할 때 함께 보낸다.
+이때 서명은 SigV4를 이용해야한다.
+
+### SigV4 요청 예시
+
+SigV4 서명을 한 후 AWS에게 전달하는 방법은 두 가지가 있다.
+
+1. Authorization header에 서명을 넣어 전달 : CLI로 호출할 때 기본으로 사용하는 방법
+2. 쿼리 스트링에 넣어 전달 : URL에 서명을 `X-Amz-Signature` 키에 넣어 전달
