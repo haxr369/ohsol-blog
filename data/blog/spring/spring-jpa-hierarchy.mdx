@@ -80,7 +80,7 @@ List<Member> result = em.createQuery(jpql, Member.class).getResultList();
 - EntityManager
   - Persistence Context 내에서 Entity 객체에 대한 CRUD 및 데이터베이스에 동기화 작업 수행
   - 쿼리 수행 단위에 해당하며 스레드와 1:1 관계
-  - [Entity 생명 주기](/blog/spring/spring-jpa-entity-life) 관리
+  - [영속성 컨텍스트와 엔티티 생명주기](/blog/spring/spring-jpa-entity-life) 관리
 - EntityTransaction
   - Data를 **변경**하는 모든 작업은 반드시 transaction 안에서 이뤄져야한다.
   - tx.begin() : transaction 시작

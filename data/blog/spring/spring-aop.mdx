@@ -1,0 +1,70 @@
+---
+title: Spring AOP
+date: 2023-11-13
+lastmod: 2023-11-13
+tags: ['java', 'aop', 'spring']
+draft: false
+summary: 'Spring AOP를 이용한 인프라 로직 관심 분리'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 개요
+
+예를 들어 메서드 **시간측정**은 메서드 **시작** 시각과 **끝** 시각을 구하고 그 **차**를 계산하는 로직이다.
+따라서 시간측정을 위해선 **관심 로직** 앞 뒤에 시간 계산을 위한 로직을 추가해야한다.
+이러면 한 메서드 안에 **관심 로직**과 **시간 측정** 로직이 섞여있는 **SOID**에서 단일책임원칙을 지키지 못한 사례라고 할 수 있다.
+
+이처럼 **시간 측정**, **권한 확인**, **드랜잭션** 같이 **관심 로직**이 아닌 것들을 **인프라 로직**이라 한다.
+
+## 인프라 로직
+
+**인프라 로직**은 애플리케이션 전 영역에서 나타날 수 있고, 동일한 작업을 반복적으로 수행하기 때문에 **중복 코드**를 만들어낼 수 있다.
+**인프라 로직**도 어떤 목적을 가지고 실행되는 **관심사**가 존재하고 전 애플리케이션에 걸쳐서 수행되기 때문에 **횡단 관심사**라고 한다.
+
+**AOP(Aspect-Oriented Programming)**는 횡단 관심사에 따라 프로그래밍하는 패러다임이다. 그렇기 때문에 실제로 **구현**하는 **AspectJ**라는 구현제가 AOP가 있다.
+
+## Spring AOP 용어
+
+횡단위로 관심사를 분리한다면, 분리한 로직을 언제 어디에 누구에게 적용할지 결정할 필요가 있다.
+
+- **Target** : 어떤 **대상**에 부가 기능을 부여할 것인가
+- **Advice** : 어떤 **부가** 기능을 사용할 것인가
+- **Join point** : **어디에 적용**할 것인가? (메서드. 필드, 객체, ...)
+- **Point cut** : 실제 advice가 적용될 지점, Spring AOP에서는 advice가 적용될 **메서드**를 선정
+
+Advice는 5가지 부가기능을 제공한다.
+
+- **Before** : **Join point**가 호출되기 전
+- **AfterReturning** : 메서드 실행 후 결과 값을 리턴한 후
+- **AfterThrowing** : 메서드에서 예외가 발생한 후 (catch 같은 느낌)
+- **After** : 메서드에 예외가 발생하던 안하던 메서드 실행 후 **무조건** 실행 (finally 같은 느낌)
+- **Aound** : 메서드 실행 앞, 뒤를 감싸는 경우
+  ```java
+  @Around("repositoryClassMethods()")
+  public Object measureMethodExecutionTime(ProceedingJoinPoint pjp) throws Throwable {
+      // 메서드 실행 직후
+      long start = System.nanoTime();
+      Object retval = pjp.proceed(); // 메서드 완료 대기
+      // 메서드 실행 완료 후
+      long end = System.nanoTime();
+      String methodName = pjp.getSignature().getName();
+      logger.info("Execution of " + methodName + " took " +
+        TimeUnit.NANOSECONDS.toMillis(end - start) + " ms");
+      return retval;
+  }
+  ```
+
+## AspectJ에서 AOP를 구현하는 방법
+
+AOP는 행단위로 관심사를 **분리**했으니 실행하기 위해선 다시 **통합**시켜야한다.
+AspectJ는 3가지 방식으로 통합한다고 한다.
+
+1. **컴파일** : `java` 파일을 `class` 파일로 컴파일하는 과정에서 AOP 코드를 끼워넣는다.
+2. **클래스 로드** : **클래스 로더**가 JVM **메모리** 상에 `class` 파일을 올릴 때 AOP를 적용
+3. **프록시 패턴** : **Spring AOP**에서 사용하는 방법. **대상** 로직을 **부가** 기능으로 **감싸서** 적용시키는 이유.
+   Spring AOP가 프록시 패턴을 사용하기 때문에 AspectJ의 Advice가 제한되는 것 같다. 원래 **AspectJ**의 advice는 단순히 실행 전, 후에만 사용되는 것이 아닌 **메서드** **중간**에서도 **부가** 기능이 **실행**될 수 있었다.
+
+### 프록시 패턴
