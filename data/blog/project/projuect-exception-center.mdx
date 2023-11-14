@@ -25,39 +25,75 @@ summary: '여기어때 프로젝트에 여러 예외들을 중앙화하고 규�
 프로젝트에서 중앙화할 예외의 도메인은 다음과 같다.
 
 1. Common
-   ```
-   - Request Body 바인딩 과정에서 유효성 검사
-   - NullPointException
-   ```
 2. Product
-   ```
-   - 존재하지 않는 상품
-   - 존재하지 않는 숙소 타입
-   ```
 3. User
-   ```
-   - 존재하지 않는 유저 요청
-   ```
 
-### [Domain]ResponseStatus
+아래 코드는 **Common** 도메인에 대한 코드를 작성했지만 **Product**와 **User**에 대해도 작성했다.
+
+### CommonResponseStatus
 
 어떤 에러 상태든 무조건 **CustomResponseStatus**에서 관리하여 모든 서버 개발자가 동일한 예외에 대해 동일한 에외 상태와 메세지를 출력하도록 한다.
-성공 처리나 유효성 검사처럼 공통적인 Status와 상품 관련 또는 유저 관련 Status는 관리를 위해 분리될 필요가 있다. 따라서 아래 이미지처럼 예외 처리 클래스가 관리된다.
+성공 처리나 유효성 검사처럼 공통적인 Status와 상품 관련 또는 유저 관련 Status는 관리를 위해 분리될 필요가 있다. 따라서 아래 코드처럼 예외 처리 클래스가 관리된다.
 각 예외는 도메인에 맞는 StatusCode를 사용한다.
 
-### [Domain]Exception
+```java:CommonResponseStatus.java
+@Getter
+public enum CommonResponseStatus {
+    // 유효성 검사와 성공 응답 코드 관리
+    SUCCESS(true, HttpStatus.OK, "요청에 성공하였습니다."),
+    NO_CONTENT(true, HttpStatus.NO_CONTENT, "요청에 성공했지만, 컨텐츠는 없습니다."),
+    INVALID_REQUEST_BODY(false, HttpStatus.BAD_REQUEST, "입력 형식을 확인해주세요."),
+    POST_INVAILD_ARGUMENT(false, HttpStatus.BAD_REQUEST, "올바른 입력 형식이 아닙니다."),
+    Null_POINT_EXCEPTION(false, HttpStatus.INTERNAL_SERVER_ERROR, "Null 값을 조회했습니다.");
+
+    private final boolean isSuccess;
+    private final HttpStatus code;
+    private final String message;
+
+    private CommonResponseStatus(boolean isSuccess, HttpStatus code, String message) {
+        this.isSuccess = isSuccess;
+        this.code = code;
+        this.message = message;
+    }
+}
+```
+
+### CommonException
 
 비즈니스 로직이나 컨트롤러에서 **개발자**가 예외처리를 통해 **직접** **예외**를 발생시키며 **[Domain]ResponseStatus**을 이용해서 예외코드와 메시지를 응답한다.
 
-## CommonExceptionHandler
+```java:CommonException.java
+public class CommonException extends RuntimeException{
+
+    private CommonResponseStatus status;
+
+
+    public CommonException(CommonResponseStatus status) {
+        super(status.getMessage());
+        this.printStackTrace(); // 예외 상황 로깅하기 에서 제거할 예정
+        this.status = status;
+    }
+
+    public CommonResponseStatus getStatus() {
+        return this.status;
+    }
+
+    public void setStatus(final CommonResponseStatus status) {
+        this.status = status;
+    }
+}
+```
+
+## BaseExceptionHandler
 
 개발자가 아닌 **프레임워크**나 **라이브러리**가 발생시키는 **예외**를 처리하며 **개발자**는 어떤 **예외**를 어떤 **응답**을 내놓을지 **결정**할 수 있다.
 이번 프로젝트에서는 개발자가 **직접 설정**한 예외처리를 일으키고 그 결과를 확인 및 예외를 자동처리하는 **handler**를 만들어볼 예정이다.
+또한 예외가 발생한 도메인이 다르더라도 한곳에서 예외를 **응답**할 수 있게한다.
 
-```java:CommonExceptionHandler.java
+```java:BaseExceptionHandler.java
 @RestControllerAdvice // Controller나 RestController가 적용된 빈에서 발생하는 예외를 잡아 처리
 @Slf4j
-public class CommonExceptionHandler {
+public class BaseExceptionHandler {
 
     // 예외가 발생하면 status를 받아서 공통 형식으로 출력
     @ExceptionHandler(value = {ProductException.class})
