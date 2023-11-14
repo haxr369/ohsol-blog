@@ -1,7 +1,7 @@
 ---
 title: Spring AOP
-date: 2023-11-13
-lastmod: 2023-11-13
+date: 2023-11-14
+lastmod: 2023-11-14
 tags: ['java', 'aop', 'spring']
 draft: false
 summary: 'Spring AOP를 이용한 인프라 로직 관심 분리'
@@ -68,3 +68,28 @@ AspectJ는 3가지 방식으로 통합한다고 한다.
    Spring AOP가 프록시 패턴을 사용하기 때문에 AspectJ의 Advice가 제한되는 것 같다. 원래 **AspectJ**의 advice는 단순히 실행 전, 후에만 사용되는 것이 아닌 **메서드** **중간**에서도 **부가** 기능이 **실행**될 수 있었다.
 
 ### 프록시 패턴
+
+**프록시**는 다른 객체에 대한 **대체** 또는 **자리표시자**를 제공할 수 있는 구조 디자인 패턴이다.
+따라서 원래 접근하려는 객체에 요청이 전달되기 **전** 또는 **후**에 무언가를 수행할 수 있도록한다.
+
+<img src="/static/images/spring/spring-proxy-structure.png" alt="프록시 패턴 구조" />
+
+`Service`와 `Proxy` 모두 `ServiceInterface`를 구현하고 있다. 그리고 `Client`는 SOLID의 의존관계 역전 원칙에 따라 `ServiceInterface`를 의존하고 있다.
+
+원래 프록시가 없었다면 `ServiceInterface`의 구현체로 `Service`가 들어갔겠지만, 프록시가 존재함으로 써 `Service`는 `Proxy`에 **포함**되고
+`Proxy`가 `ServiceInterface`의 구현체고 들어가게된다.
+그림과 같이 `Proxy`가 먼저 요청의 처리(초기화 지연, 로깅, 캐싱, ...)을 한 후 `Service` 객체에 요청을 전달한다.
+
+Spring AOP에는 부가 기능을 수행하는 `Proxy`에 대상 기능인 `Service`를 넣고 `Proxy` 객체를 컨트롤러나 다른 서비스에서 사용하게된다.
+그럴 경우 대상 기능과 부가 기능을 **분리**하면서 `Proxy`의 로깅, 시간측정을 수행하면서 `Service`의 대상 기능도 수행할 수 있게된다.
+
+하지만 조심해야할 점이 메소드에 AOP를 적용하면 `Proxy` 클래스에서 `Service`의 메소드에 접근하는 것이기 때문에
+`Service`의 **private** 메소드에는 `Proxy`가 접근할 수 없다. 그러므로 Spring AOP를 사용하기 위해선 메소드를 **public**으로 설정해야한다.
+
+## AOP 사용사례
+
+- @Transactional
+  많이 사용하는 **@Transactional**도 Spring AOP이다. 원래는 서비스 로직 시작할 때 트랜젝션을 열고, 로직이 끝날 때 트랜젝션을 커밋해야한다.
+  하지만 Spring AOP의 프록시 패턴을 이용해서 **@Transactional**로 서비스 로직을 감싸게된다.
+- Interceptor
+- Filter

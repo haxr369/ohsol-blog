@@ -1,0 +1,43 @@
+---
+title: CodeDeploy를 이용한 자동 배포
+date: '2023-11-01'
+lastmod: '2023-11-01'
+tags: ['java', 'CodeDeploy', 'aws', 'project']
+draft: false
+summary: '프로젝트의 빠른 배포를 위해 CodeDeploy를 적용하는 과정'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={2} />
+
+## 개요
+
+여기어때 프로젝트에서 **github** 액션을 이용해서 코드를 수정하고 main 브랜치에 커밋하면 jar 파일을 빌드하고 AWS S3에 업로드하도록 자동화했다.
+하지만, S3의 jar 파일을 EC2로 옮겨서 WAS 다시 실행시키는 것은 **수동**으로 했었고, 계속된 반복 작업으로 비효율성을 느꼈다.
+
+그렇기 때문에 [AWS CICD 방법 (1)](/blog/aws/aws-cicd-1)의 **CodeDeploy**를 사용해서 자동으로 S3의 jar 파일을 EC2로 옮기고 새로운 WAS를 실행시키도록 하고 싶었다.
+
+## CodeDeploy 적용 과정
+
+1. CodeDeploy를 위안 IAM 역할 생성 : 프로젝트는 EC2를 사용하기 때문에 일반, 람다, ECS 버전 중 일반 CodeDeploy를 사용했다.
+2. EC2 인스턴스를 위한 IAM 역할 생성 : EC2 인스턴스가 S3에 접근해서 객체를 읽을 수 있도록 하는 역할 생성.
+3. EC2에 CodeDeploy 에이전트를 설치 : 아래 명령어를 실행하면 에이전트가 프로레스 ID를 가지면서 실행된다.
+
+   ```
+   #!/bin/bash
+
+   # Installing CodeDeploy Agent
+   sudo yum update
+   sudo yum install ruby
+
+   # Download the agent (replace the region)
+   wget https://aws-codedeploy-eu-west-3.s3.eu-west-3.amazonaws.com/latest/install
+   chmod +x ./install
+   sudo ./install auto
+   sudo service codedeploy-agent status
+   ```
+
+4. CodeDeploy에서 배포 그룹 만들기 : CodeDeploy가 특정한 EC2 인스턴스에 배포하기 위해선 EC2 인스턴스에 **태그**를 달아주고 알려주면 그 태그를 가진 인스턴스에 자동 배포하게된다.
+5. CodeDeploy 배포를 위해선 appspec.yml이라는 파일에 어떻게 jar 파일을 실행시킬 것인지 작성해야한다. appspec.yml을 테스트하기 위해 빌드된 jar파일, appspec.yml, 그리고 jar 파일 실행을 위한 sh파일을 묶은 deploy.zip을 S3에 수동으로 올렸다.
+6. S3에 deploy.zip 파일을 추가한 후 배포를 생성하고 EC2에 S3에 접근할 수 있도록 IAM 역할을 부여해야한다.
