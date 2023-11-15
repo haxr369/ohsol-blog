@@ -1,0 +1,157 @@
+---
+title: GitHub action, CodePipeline, 그리고 CodeDeploy를 이용한 자동 배포 실습
+date: '2023-11-01'
+lastmod: '2023-11-01'
+tags: ['java', 'githubaction', 'CodePipeline', 'CodeDeploy', 'aws', 'project']
+draft: false
+summary: '프로젝트의 빠른 배포를 위해 CodePipeline과 CodeDeploy를 적용하는 과정'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={2} />
+
+## 개요
+
+여기어때 프로젝트에서 **github** 액션을 이용해서 코드를 수정하고 main 브랜치에 커밋하면 jar 파일을 빌드하고 AWS S3에 업로드하도록 자동화했다.
+하지만, S3의 jar 파일을 EC2로 옮겨서 WAS 다시 실행시키는 것은 **수동**으로 했었고, 계속된 반복 작업으로 비효율성을 느꼈다.
+
+그렇기 때문에 [AWS CICD 방법 (1)](/blog/aws/aws-cicd-1)의 **CodeDeploy**를 사용해서 자동으로 S3의 jar 파일을 EC2로 옮기고 새로운 WAS를 실행시키도록 하고 싶었다.
+그 전에 실질적인 방법을 학습하고자 **GitHub action**, **CodePipeline**, 그리고 **CodeDeploy**를 이용한 간단한 CICD를 하고자한다.
+
+<img
+  src="/static/images/aws/aws-cicd-overview.png"
+  alt="Github action codepipeline codedeploy를 이용한 자동 배포"
+/>
+
+결론에서 위 그림을 다시 설명하겠다.
+
+## GithubAction을 적용해보기
+
+지금까지는 S3에 `zip` 파일을 수동으로 넣고 이를 배포하는 과정을 거쳤다면
+이번에는 GithubAction을 이용해서 레포지토리에 푸시하면 자동으로 S3에 파일을 올리는 과정을 수행해서 최종적인 CICD를 완성하려고한다.
+
+```yml:deploy-by-codedeploy.yml
+name: Deploy zip to AWS S3
+on:
+  push:
+    branches:
+      - main
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: branch checkout
+        uses: actions/checkout@v2
+
+      - name: Zip Files
+        run: zip -r Deploy.zip ./*
+
+      - name: Set AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{secrets.AWS_ACCESS_KEY_ID}}
+          aws-secret-access-key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
+          aws-region: ap-northeast-2
+
+      - name: Upload Zip
+        run: aws s3 cp Deploy.zip s3://sol-codedeploy-demo/Deploy.zip
+```
+
+위와 같이 GithubAction을 작성하면 레포지토리의 내용을 zip 파일로 압축한 다음 S3 버킷에 `객체`를 복사한다.
+
+`주의할 점`은 **zip** 파일을 생성할 때 꼭 **-r**을 붙여줘서 하위 디렉토리에 있는 모든 내용을 담을 수 있어야한다. 그렇지 않으면 아래와 같은 에러 메시지가 발생한다.
+
+```
+Script does not exist at specified location:
+/opt/codedeploy-agent/deployment-root/d39cb336-dbc3-4617-9c94-eb351ce22cf5/d-V55BA3TW1/
+deployment-archive/scripts/install_dependencies
+```
+
+## CodeDeploy 적용 과정
+
+1. CodeDeploy를 위안 IAM 역할 생성 : 프로젝트는 EC2를 사용하기 때문에 일반, 람다, ECS 버전 중 일반 CodeDeploy를 사용했다.
+2. EC2 인스턴스를 위한 IAM 역할 생성 : EC2 인스턴스가 S3에 접근해서 객체를 읽을 수 있도록 하는 역할 생성.
+3. EC2에 CodeDeploy 에이전트를 설치 : 아래 명령어를 실행하면 에이전트가 프로레스 ID를 가지면서 실행된다. 그리고 위에서 만든 IAM 역할을 적용해야한다.
+
+   ```
+   #!/bin/bash
+
+   # Installing CodeDeploy Agent
+   sudo yum update
+   sudo yum install ruby
+
+   # Download the agent (replace the region)
+   wget https://aws-codedeploy-eu-west-3.s3.eu-west-3.amazonaws.com/latest/install
+   chmod +x ./install
+   sudo ./install auto
+   sudo service codedeploy-agent status
+   ```
+
+   또한 `tail /var/log/aws/codedeploy-agent/codedeploy-agent.log -f`을 통해 로그를 쉽게 볼 수 있다.
+
+4. CodeDeploy에서 배포 그룹 만들기 : CodeDeploy가 특정한 EC2 인스턴스에 배포하기 위해선 EC2 인스턴스에 **태그**를 달아주고 알려주면 그 태그를 가진 인스턴스에 자동 배포하게된다.
+5. CodeDeploy 배포를 위해선 appspec.yml이라는 파일에 어떻게 웹 서버를 구동시킬 것인지 적어놔야한다. 아래는 예제 `appspec.yml`
+
+   ```yml:appspec.yml
+   version: 0.0
+   os: linux
+   files:
+      - source: /index.html
+      destination: /var/www/html/
+      hooks:
+      BeforeInstall: - location: scripts/install_dependencies
+      timeout: 300
+      runas: root - location: scripts/start_server
+      timeout: 300
+      runas: root
+      ApplicationStop: - location: scripts/stop_server
+      timeout: 300
+      runas: root
+
+   ```
+
+6. S3의 객체의 s3 url을 참고해서 배포 생성 - 끝
+
+<img src="/static/images/aws/aws-codedeploy-complete.png" alt="index.html 배포됨" />
+
+## 주의할 점
+
+### appspce.yml
+
+`SampleApp_Linux.zip` 파일에 모든 프로젝트 파일이 들어있고, 루트 디렉토리에 `appspec.yml`이 들어있다.
+**source**의 파일이 **destination**으로 복사한 파일을 다음 **hooks**에서 명령을 실행시킬 수 있기 때문에 가장 중요한 부분이다.
+그리고 **scripts** 디렉토리 안에 의존성을 설치하는 `install_dependencies`가 있고, 서버를 시작하는 명령어가 담긴 `start_server`가 있다.
+
+<img src="/static/images/aws/aws-index-dontshow.png" alt="index.html 파일이 안보임" />
+
+위 이미지처럼 배포 전에는 EC2의 `/var/www/html/` 디렉토리에 아무런 파일이 존재하지 않음을 알 수 있다. 하지만, 아래 그림처럼 배포를 한 후에는 복사된다.
+
+<img src="/static/images/aws/aws-index-yesshow.png" alt="index.html 파일이 보임" />
+
+## CodePipeline 생성
+
+CodePipeline는 Github action으로 인해 S3의 객체가 업데이트될 때 마다 EC2 인스턴스 안에 **CodeDeploy agent**에게 **객체**를 다시 다운로드 받고 배포를
+진행하도록 **자동으로** 명령해주는 서비스이다.
+
+더 깊게는 github의 코드를 가져와서 빌드까지 해주지만 이번 실습은 Github action으로 빌드하기 때문에 CodeDeploy만 사용해서 자동배포하는 역할만 줬다.
+더 많은 내용은 [AWS CICD 방법(1)](https://ohsol-blog.vercel.app/blog/aws/aws-cicd-1)에 있다.
+
+CodePipeline은 다음과 같은 순서로 S3 객체와 CodeDeploy를 연결한다.
+
+1. 파이프라인 유형은 V1으로 설정 및 IAM 역할은 자동 생성하도록한다.
+2. **소스 공급자** 설정은 S3로 하고 배포할 객체의 `키`를 작성한다. 이때 `키`는 S3 URL과는 다른 것으로 S3 버킷 상에서 객체의 `위치`만을 적은 문자열이다. 그리고 **변경 감지 옵션**은 `Cloud Events`를 선택해야 S3가 업데이트될 때마다 배포가 진행된다.
+3. 빌드는 건너뛴다.
+4. **배포 공급자**는 codedeploy를 선택한다. 그럼 위에서 작성한 애플리케이션 이름과 배포 그룹 이름을 선택하고 다음을 누르면 **CICD**가 완성이다!
+
+## 결론
+
+<img
+  src="/static/images/aws/aws-cicd-overview.png"
+  alt="Github action codepipeline codedeploy를 이용한 자동 배포"
+/>
+
+정리하면 사용자가 GitHub 레포지토리에 코드를 **push**하면 **githubaction**이 이를 감지하고 빌드나 zip파일로 묶어서 **S3**로 **업로드**한다.
+**CodePipeline**이 S3의 변경을 감지하면 **CodeDeploy**에게 배포를 요청한다.
+**CodeDeploy**는 **EC2**의 **CodeDeploy agent**에게 배포를 요청한다.
+**CodeDeploy agent**는 S3에서 객체를 가져와서 `appspec.yml`의 명령어들을 실행시킨다.
