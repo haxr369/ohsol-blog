@@ -1,8 +1,8 @@
 ---
-title: GitHub action, CodePipeline, 그리고 CodeDeploy를 이용한 자동 배포 실습
-date: '2023-11-01'
-lastmod: '2023-11-01'
-tags: ['java', 'githubaction', 'CodePipeline', 'CodeDeploy', 'aws', 'project']
+title: 자동 배포 실습 (1)
+date: '2023-11-15'
+lastmod: '2023-11-15'
+tags: ['githubaction', 'CodePipeline', 'CodeDeploy', 'aws']
 draft: false
 summary: '프로젝트의 빠른 배포를 위해 CodePipeline과 CodeDeploy를 적용하는 과정'
 ---
@@ -86,6 +86,7 @@ deployment-archive/scripts/install_dependencies
    chmod +x ./install
    sudo ./install auto
    sudo service codedeploy-agent status
+   sudo yum install java
    ```
 
    또한 `tail /var/log/aws/codedeploy-agent/codedeploy-agent.log -f`을 통해 로그를 쉽게 볼 수 있다.

@@ -1,0 +1,160 @@
+---
+title: 자동 배포 실습 (2)
+date: '2023-11-16'
+lastmod: '2023-11-16'
+tags: ['java', 'githubaction', 'CodePipeline', 'CodeDeploy', 'aws', 'project']
+draft: false
+summary: '프로젝트의 빠른 배포를 위해 Githubaction, CodePipeline과 CodeDeploy를 적용하는 과정'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={2} />
+
+## 개요
+
+이번에는 [sol-coupang-restAPI](https://github.com/haxr369/sol-coupang-restAPI)의 CICD를 위해 GitHub action, Codepipeline, 그리고 CodeDeploy를 적용하는 과정을 포스팅한다.
+CICD의 상세한 과정과 사용법은 [자동 배포 실습(1)](/blog/aws/aws-cicd-training)을 참고하면 된다.
+
+## 이전 포스팅과 달라진 상황
+
+이전 포스팅에서 자동배포는 사실상 **빌드 과정**이 생략됀 상황이였다. 하지만 이번에는 Spring boot 프로젝트를 **Githubaction**으로 빌드하는 과정이 추가되고,
+이를 **Zip**으로 압축하는 과정이 필요하다.
+
+또한 이전 포스팅에서는 EC2에 WAS를 배포하진 않았지만, 이번에는 빌드한 **Jar** 파일을 실행시키는 과정과, 애플리케이션이 종료될 때 WAS를 멈추는 기능이 필요하다.
+
+## 로컬에서 script 짜기
+
+EC2의 **CodeDeploy agent**가 WAS를 실행시키려면 jar 파일을 실행시킬 script가 필요하다.
+
+```sh:start_server.sh
+#!/bin/bash
+
+# Spring Boot 애플리케이션을 백그라운드로 실행
+nohup java -Dserver.port=80 -jar /var/www/jar/app.jar &
+
+# 백그라운드 실행 확인 메시지
+echo "Spring Boot 애플리케이션이 백그라운드에서 실행 중입니다."
+```
+
+```sh:stop_server.sh
+#!/bin/bash
+
+PORT=80
+
+# 80 포트를 사용 중인 프로세스의 PID 찾기
+PID=$(lsof -t -i:$PORT)
+
+if [ -z "$PID" ]; then
+  echo "포트 $PORT를 사용 중인 프로세스가 없습니다."
+else
+  # 프로세스 종료
+  echo "포트 $PORT를 사용 중인 프로세스를 종료합니다. (PID: $PID)"
+  kill -9 "$PID"
+fi
+
+```
+
+## appspec.yml 작성하기
+
+WAS 실행과 중단을 위한 스크립트를 작성했다면 **CodeDeploy agent**가 실행시킬 **appspec.yml**을 작성해야한다.
+
+```yml:appspec.yml
+version: 0.0
+os: linux
+files:
+  - source: /app.jar
+    destination: /var/www/jar/
+hooks:
+  ApplicationStart:
+    - location: scripts/start_server.sh
+      timeout: 300
+      runas: root
+  ApplicationStop:
+    - location: scripts/stop_server.sh
+      timeout: 300
+      runas: root
+```
+
+`app.jar` 파일을 실행시키고 그 명령어가 끝나는 것이 아니기 때문에 **CodeDeploy**가 계속 실행된다.
+
+## Githubaction으로 Spring boot 빌드하고 S3에 넘기기
+
+위처럼 필요한 스크립트 파일을 작성했다면 githubaction이 수행할 Workflow를 작성한다.
+
+```yml:deploy_on_aws.yml
+name : Deploy Jar to AWS S3
+on :
+  push:
+    branches:
+      - main
+jobs :
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: branch checkout
+        uses: actions/checkout@v2
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'microsoft'
+          cache: 'gradle'
+
+      - name: Grant execute permission for gradle
+        run: chmod +x gradlew
+
+      - name: Build with Gradle
+        run: ./gradlew build -x test
+
+      - name: Copy Jar
+        run: cp ./build/libs/sol-coupang-0.0.1-SNAPSHOT.jar ./app.jar
+
+      - name: Zip Files
+        run: zip -r deploy.zip ./app.jar ./scripts/* ./appspec.yml
+
+      - name: Set AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{secrets.AWS_ACCESS_KEY_ID}}
+          aws-secret-access-key: ${{secrets.AWS_SECRET_ACCESS_KEY}}
+          aws-region: ap-northeast-2
+
+      - name: Upload Jar Compose to S3
+        run: |
+          aws s3 cp deploy.zip s3://sol-codedeploy-demo/deploy.zip
+```
+
+위 Workflow에서 가장 중요한 부분은 역시 **Make zip File** 부분이다. 무조건 zip 파일 내부에서 최상단에 **appspec.yml**을 위치시켜야하고,
+**script** 디렉토리 내부 파일도 함께 복사하기 위해 -r 옵션을 붙였다.
+
+## AWS로 배포하기
+
+이전 포스팅 [자동 배포 실습(1)](/blog/aws/aws-cicd-training)을 참고하여 Codepipeline, CodeDeploy, S3 버킷, EC2와 CodeDeploy agent를 설치하면
+자동 배포가 끝난다. **당연하지만 Spring boot 프로젝트에 root URI를 담당하는 컨트롤러를 만들어줘야한다.**
+
+배포를 위해 EC2와 동일한 VPC에 **RDS**를 생성하고 잘 연결되는지 테스트하고 Github로 **push**하면 다음과 같은 결과가 나온다!
+
+아래 이미지는 `main` 브랜치에 **push**나 **PR** 했을 때 자동으로 빌드하고 S3로 zip 파일을 보내는 **GitHub Action** 결과화면
+
+<img src="/static/images/project/project-cicd-gitaction" alt="git action 결과화면" />
+
+아래 이미지는 S3의 객체가 **업데이트**되는 것을 확인하고 자동으로 배포작업을 실행하는 화면
+**CodeDeploy**가 계속 실행 중인 이유는 **ApplicationStart**의 명령어가 jar 파일을 실행하고 있기 때문이다.
+
+<img src="/static/images/project/project-cicd-codepipeline" alt="codepipeline 결과화면" />
+
+모든 배포가 완료되고 **CodeDeploy agent**가 **Jar** 파일을 실행시켜서 WAS가 띄워진 결과 화면.
+
+<img src="/static/images/project/project-cicd-result" alt="배포 결과 화면" />
+
+## 결론 및 문제점 파익
+
+이번 포스팅을 통해 CICD의 구현을 **1차**적인 성공이라고 할 수 있다.
+하지만, **CodeDeploy agent**가 직접 `app.jar`를 실행시키기 때문에 **CodeDeploy** 단계가 계속 진행되다가 `실패`로 뜨게된다.
+이 방식을 앞으로 사용한다면 실제로 WAS에 문제가 생겨서 배포에 실패했을 때와 정상적으로 WAS가 실행됐고, **ApplicationStart** 단계가 끝나지 않아서 배포에 실패했을 때를
+구분하기 어려울 것이다.
+
+다음번에 CICD를 공부할 때는 **CodeDeploy agent**가 직접 `app.jar`를 실행시키는 것이 아니라 다른 방법을 찾아서 실행시켜야겠다.
+이는 WAS 배포의 성공과 실패를 **CodeDeploy**를 통해 확인할 확실한 방법이 될 것이다.
