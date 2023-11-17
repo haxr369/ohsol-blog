@@ -138,16 +138,16 @@ jobs :
 
 아래 이미지는 `main` 브랜치에 **push**나 **PR** 했을 때 자동으로 빌드하고 S3로 zip 파일을 보내는 **GitHub Action** 결과화면
 
-<img src="/static/images/project/project-cicd-gitaction" alt="git action 결과화면" />
+<img src="/static/images/project/project-cicd-gitaction.png" alt="git action 결과화면" />
 
 아래 이미지는 S3의 객체가 **업데이트**되는 것을 확인하고 자동으로 배포작업을 실행하는 화면
 **CodeDeploy**가 계속 실행 중인 이유는 **ApplicationStart**의 명령어가 jar 파일을 실행하고 있기 때문이다.
 
-<img src="/static/images/project/project-cicd-codepipeline" alt="codepipeline 결과화면" />
+<img src="/static/images/project/project-cicd-codepipeline.png" alt="codepipeline 결과화면" />
 
 모든 배포가 완료되고 **CodeDeploy agent**가 **Jar** 파일을 실행시켜서 WAS가 띄워진 결과 화면.
 
-<img src="/static/images/project/project-cicd-result" alt="배포 결과 화면" />
+<img src="/static/images/project/project-cicd-result.png" alt="배포 결과 화면" />
 
 ## 결론 및 문제점 파익
 
