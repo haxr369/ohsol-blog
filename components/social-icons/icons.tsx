@@ -60,7 +60,3 @@ export function Mastodon(svgProps: SVGProps<SVGSVGElement>) {
     </svg>
   )
 }
-
-export function Resume(svgProps: SVGProps<SVGSVGElement>) {
-  return <Image src="/static/sols/resume-7.png" width={8} height={8} alt="Picture of the author" />
-}
