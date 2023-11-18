@@ -1,0 +1,180 @@
+---
+title: enum class를 객체지향적으로 리팩토링하기
+date: 2023-11-18
+lastmod: 2023-11-18
+tags: ['java', 'spring', 'oop', 'exception', 'solid', 'enum', 'project']
+draft: false
+summary: '객체지향적으로 예외처리 방법을 중앙화하기 위해 enum class의 추상 클래스를 만들고 리팩토링하기'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 개요
+
+[여기어때 클론 코딩](https://github.com/epiktrees-bestchoice/bestChoice-backend/blob/main/src/main/java/bestChoicebackend/spring/common/responses/BaseResponse.java)에서
+`BaseResponse`의 **Overloading**을 통해 규격화된 응답을 줄 수 있었다.
+그러나 아래처럼 도메인에 따른 **ResponseStatus** 마다의 생성자를 만들어서 동일한 코드가 반복되는 문제가 있다.
+
+```java:BaseResponse.java
+@JsonPropertyOrder({"isSuccess", "code", "message", "result"})
+@Getter
+public class BaseResponse<T> {
+    @JsonProperty("isSuccess") // json 객체 내의 Key 값 설정
+    private final Boolean isSuccess;
+    private final String message;
+    private final HttpStatus code;
+    @JsonInclude(JsonInclude.Include.NON_NULL) // json을 만들 때 null인 객체는 제외한다.
+    private T result;
+
+    ...
+
+    public BaseResponse(CommonResponseStatus status) {
+        // 예외 발생한 경우
+        this.isSuccess = status.isSuccess();
+        this.message = status.getMessage();
+        this.code = status.getCode();
+    }
+
+    public BaseResponse(ProductResponseStatus status) {
+        // 예외 발생한 경우
+        this.isSuccess = status.isSuccess();
+        this.message = status.getMessage();
+        this.code = status.getCode();
+    }
+
+    public BaseResponse(UserResponseStatus status) {
+        // 예외 발생한 경우
+        this.isSuccess = status.isSuccess();
+        this.message = status.getMessage();
+        this.code = status.getCode();
+    }
+}
+```
+
+위 코드를 보면 **구체적인 클래스**를 의존하는 매우 **반복적인** 생성자가 여러개 있는 것을 볼 수 있다. 이는 **SOLID**의 의존관계 역전 원칙을 어긴 경우이다.
+그렇다면 **추상 클래스**를 만들어서 그 클래스를 의존하는 생성자를 만들어서 **의존관계 역전** 원칙에 맞게 `리팩토링`해야한다.
+
+## ResponseStatus를 분석하기
+
+```java:CommonResponseStatus.java
+@Getter
+public enum CommonResponseStatus {
+    // 유효성 검사와 성공 응답 코드 관리
+    SUCCESS(true, HttpStatus.OK, "요청에 성공하였습니다."),
+    NO_CONTENT(true, HttpStatus.NO_CONTENT, "요청에 성공했지만, 컨텐츠는 없습니다."),
+    INVALID_REQUEST_BODY(false, HttpStatus.BAD_REQUEST, "입력 형식을 확인해주세요."),
+    POST_INVAILD_ARGUMENT(false, HttpStatus.BAD_REQUEST, "올바른 입력 형식이 아닙니다."),
+    Null_POINT_EXCEPTION(false, HttpStatus.INTERNAL_SERVER_ERROR, "Null 값을 조회했습니다.");
+
+    private final boolean isSuccess;
+    private final HttpStatus code;
+    private final String message;
+
+    private CommonResponseStatus(boolean isSuccess, HttpStatus code, String message) {
+        this.isSuccess = isSuccess;
+        this.code = code;
+        this.message = message;
+    }
+}
+```
+
+`CommonResponseStatus`은 **enum** 클래스이고, 이는 `final`이기 때문에 일반적인 클래스와 달리 다른 추상 **enum**을 만들어서 상속시킬 수 없다.
+다만 인터페이스를 만들고 **enum**으로 구현할 수는 있다. 아래에서 그 예시와 적용 방안을 소개한다.
+
+## 인터페이스를 enum으로 implment하기
+
+실제로 인터페이스를 implment하는데 **enum**으로 할 수 있다. 아래는 [PrepInsta](https://prepinsta.com/java/java-enum-inheritance-and-interface/)에서 작성한 블로그인데
+인터페이스를 **enum**으로 implment하는 좋은 예시인 것 같다.
+
+```java:enumInterface.java
+public interface Shape {
+    double getArea();
+}
+
+public enum Square implements Shape {
+    SMALL(1), MEDIUM(2), LARGE(3);
+
+    private double side;
+
+    Square(double side) {
+        this.side = side;
+    }
+
+    public double getArea() {
+        return side * side;
+    }
+}
+
+public enum Circle implements Shape {
+    SMALL(1), MEDIUM(2), LARGE(3);
+
+    private double radius;
+    private final double PI = 3.14;
+
+    Circle(double radius) {
+        this.radius = radius;
+    }
+
+    public double getArea() {
+        return PI * radius * radius;
+    }
+}
+public class Main {
+    public static void main(String[] args) {
+        Shape[] shapes = new Shape[]{Square.SMALL, Square.MEDIUM, Square.LARGE, Circle.SMALL, Circle.MEDIUM, Circle.LARGE};
+        for (Shape shape : shapes) {
+            System.out.println(shape + " area: " + shape.getArea());
+        }
+    }
+}
+```
+
+위 코드를 보면 `Shape` 인터페이스를 `Circle`, `Square` enum class로 implements했다.
+그렇기 때문에 `Main`에서 다형성을 이용한 배열을 만들고 사용할 수 있다.
+이 특성을 사용하면 `BaseResponse`의 생성자를 하나로 통일할 수 있을 것 같다.
+
+## 추상화된 ResponseStatus으로 BaseResponse 생성자 만들기
+
+위 인터페이스를 enum으로 구현하여 다형성을 이용할 수 있고, 이는 **의존 관계 역전 원칙**을 지킬 수 있게된다. 정리하면 아래와 같은 그림이 될 것이다.
+
+<img src="/static/images/java/java-oop-refac-before" alt="의존 관계 역전 적용 전" />
+<img src="/static/images/java/java-oop-refac-after" alt="의존 관계 역전 적용 후" />
+
+```java:BaseResponse.java
+@JsonPropertyOrder({"isSuccess", "code", "message", "result"})
+@Getter
+public class BaseResponse<T> {
+     @JsonProperty("isSuccess") // json 객체 내의 Key 값 설정
+    private final boolean isSuccess;
+    private final String message;
+    private final HttpStatus code;
+    @JsonInclude(JsonInclude.Include.NON_NULL) // json을 만들 때 null인 객체는 제외한다.
+    private T result;
+
+    ...
+
+    public BaseResponse(BaseResponseStatus status) {
+        // 예외 발생한 경우
+        this.isSuccess = status.getIsSuccess();
+        this.message = status.getMessage();
+        this.code = status.getCode();
+    }
+}
+```
+
+위와 같이 **추상 클래스**인 `BaseResponseStatus`를 `CommonResponseStatus`, `ProductResponseStatus`, 그리고 `UserResponseStatus`가 구현해서
+의존 관계 역전을 이뤘고, `BaseResponse`로 동일한 포멧의 예외를 발생시킬 수 있게된다.
+
+## ExceptionHandler 리팩토링
+
+ResponseStatus를 `BaseResponseStatus`로 추상화시켰기 때문에 Exception도 하나의 `BaseException`으로 추상화시켜서
+**의존 관계 역전**을 적용하면 더 깔끔하고 통일성 있는 `CommonExceptionHandler`를 작성할 수 있다.
+
+기존 [예외 처리 중앙화와 응답 규격화 (방법)](https://ohsol-blog.vercel.app/blog/java/java-exception-center)에서
+`의존 관계 역전`을 적용해서 리팩토링하면 아래와 같다. 코드는 [여기](https://github.com/epiktrees-bestchoice/bestChoice-backend/blob/main/src/main/java/bestChoicebackend/spring/common/handler/CommonExceptionHandler.java)에 있다.
+
+<img src="/static/images/java/java-oop-refac-all.png" alt="예외처리 전반 리팩토링" />
+
+위 그림과 같이 예외처리 전반에 클래스들을 리팩토링할 수 있다.
