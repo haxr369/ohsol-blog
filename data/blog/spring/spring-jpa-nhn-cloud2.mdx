@@ -1,0 +1,24 @@
+---
+title: Spring JPA의 사실과 오해 (2)
+date: 2023-11-20
+lastmod: 2023-11-20
+tags: ['java', 'spring', 'jpa', 'hibernate', 'nhn-Forward']
+draft: false
+summary: 'NHN FORWARD에서 소개한 Spring DATA JPA에서 몰랐던 내용 정리와 실습'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+이번 포스팅은 [Hibernate의 N+1 Select 문제](/blog/spring/spring-jpa-np1)에서 추가적으로
+[NHN Forward 2019](https://www.youtube.com/watch?v=rYj8PLIE6-k&list=PL42XJKPNDepZVLkCM4yEKmU4LHyXjzChy&index=7)에 발표된
+`Spring Data JPA의 사실과 오해` 내용을 참고하고 실습한다.
+
+이전 **OneToMany** 관계의 **insert** 쿼리 문제와 **fetch join**에 관련된 내용은 [Spring JPA의 사실과 오해 (1)](/blog/spring/spring-jpa-nhn-cloud1)을 참고할 수 있다.
+
+## JPA Repository 메서드로 JOIN 쿼리 보내기
+
+## Page vs Slice
+
+## JPA Repository 메서드로 DTO Projection 하기

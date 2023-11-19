@@ -1,0 +1,71 @@
+---
+title: Spring JPA의 사실과 오해 (1)
+date: 2023-11-19
+lastmod: 2023-11-19
+tags: ['java', 'spring', 'jpa', 'N+1-problem', 'hibernate', 'nhn-Forward']
+draft: false
+summary: 'NHN FORWARD에서 소개한 Spring DATA JPA에서 몰랐던 내용 정리와 실습'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+이번 포스팅은 [Hibernate의 N+1 Select 문제](/blog/spring/spring-jpa-np1)에서 추가적으로
+[NHN Forward 2019](https://www.youtube.com/watch?v=rYj8PLIE6-k&list=PL42XJKPNDepZVLkCM4yEKmU4LHyXjzChy&index=7)에 발표된
+`Spring Data JPA의 사실과 오해` 내용을 참고하고 실습한다.
+
+## @OneToMany 관계에서 영속성 전이를 통한 Insert
+
+<img src="/static/images/spring/spring-user-alarm-entity.png" alt="user와 alarm 사이의 연관관계" />
+
+위 그림과 같은 User와 Alarm 사이의 OneToMany, ManyToOne 양방향 관계에서 아래 코드와 같이 한 User 엔티티에 Alarm 엔티티를 추가하는 작업을 진행했다.
+예상대로라면 `insert` 쿼리가 3회 발생해야한다.
+
+```java:UserService.java
+public class UserService {
+    private final UserRepository userRepository;
+    @Transactional
+    public void userAlarmInsert(){
+        User user1 = new User(4L,"오솔","010-6604-4461","집수소1",new ArrayList<>());
+        Alarm alarm1 = new Alarm(5,user1,"기다려오 아저시",false, LocalDateTime.now());
+        Alarm alarm2 = new Alarm(6,user1,"기다리지 마시오 아저시",false, LocalDateTime.now());
+        user1.getAlarms().add(alarm1);
+        user1.getAlarms().add(alarm2);
+        userRepository.save(user1);
+    }
+}
+```
+
+**OneToMany** 관계를 가진 경우 위 코드와 같이 `insert` 쿼리를 요청할 때 아래 로그를 보면 `insert`와 `select` 쿼리가 함께 발생한다.
+
+```
+select u1_0.user_id,u1_0.user_address,u1_0.user_name,u1_0.user_phone_number,a1_0.user_id,a1_0.alarm_id,a1_0.created_at,a1_0.message,a1_0.read_or_not from user u1_0 left join alarm a1_0 on u1_0.user_id=a1_0.user_id where u1_0.user_id=4;
+insert into user (user_address,user_name,user_phone_number) values ('집수소1','오솔','010-6604-4461');
+select a1_0.alarm_id,a1_0.created_at,a1_0.message,a1_0.read_or_not,a1_0.user_id from alarm a1_0 where a1_0.alarm_id=5;
+insert into alarm (created_at,message,read_or_not,user_id) values ('2023-11-19T22:41:04.928+0900','기다려오 아저시',false,3);
+select a1_0.alarm_id,a1_0.created_at,a1_0.message,a1_0.read_or_not,a1_0.user_id from alarm a1_0 where a1_0.alarm_id=6;
+insert into alarm (created_at,message,read_or_not,user_id) values ('2023-11-19T22:41:04.928+0900','기다리지 마시오 아저시',false,3);
+```
+
+`User` 엔티티와 `Alarm` 엔티티의 insert인데 왜 **Select**가 발생하는 걸까?
+
+`save` 메서드를 처리할 때 영속성 컨텍스트에 존재하지 않는 엔티티일 때 `persist()` 메소드로 엔티티를 **등록**하게되고 그렇지 않다면 `merge()`메소드로 엔티티를 **업데이트**하게된다.
+
+위 service 코드에서 엔티티 객체를 새롭게 생성하고 `save`했기 때문에 **등록**할 줄 알았지만, `@Id` 값을 체워서 저장했기 때문에 영속성 컨텍스트에 이미 존재하는 엔티티와 `@Id`가 겹칠 수 있다.
+그렇기 때문에 `merge`를 위해 Select 후 insert를 진행하는 것이다.
+
+실제로 `User`와 `Alarm` 엔티티 객체의 `@Id` 부분을 `null`로 처리하고 **save**하면 3개의 insert 쿼리만 발생한다.
+
+## findAll에서 N+1 문제
+
+@OneToMany 관계든 @ManyToOne 관계든 fetch 전략이 EAGER나 LAZY 모두 **Fetch Join**이나 **default_batch_fetch**하지 않는다면
+연관 Entity를 참조하는 순간 추가적인 쿼리가 수행된다.
+
+당연히 findAll 메서드를 수행할 때도 해당 **Entity**의 테이블에 JPQL을 먼저 수행하고, 얻은 레코드 각각에 Entity에 설정된 fetch 전략을 적용해서 연관 entity 가져온다.
+그렇기 때문에 findAll() 메서드 호출도 N+1 문제 발생 가능하다.
+
+## fetch join 사용할 때 주의할 점
+
+1. pagination + Fatch Join
+2. 둘 이상의 컬렉션을 Fetch Join - **MultipleBagFetchException**
