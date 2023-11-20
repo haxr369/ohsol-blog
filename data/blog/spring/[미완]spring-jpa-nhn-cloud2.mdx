@@ -17,8 +17,44 @@ summary: 'NHN FORWARD에서 소개한 Spring DATA JPA에서 몰랐던 내용 정
 
 이전 **OneToMany** 관계의 **insert** 쿼리 문제와 **fetch join**에 관련된 내용은 [Spring JPA의 사실과 오해 (1)](/blog/spring/spring-jpa-nhn-cloud1)을 참고할 수 있다.
 
-## JPA Repository 메서드로 JOIN 쿼리 보내기4
+## JPA Repository 메서드로 JOIN 쿼리 보내기
+
+**JPA**는 데이터베이스 테이블 간의 관계를 Entity 클래스의 **속성**으로 모델링한다.
+**JPA Repository** 메서드는 `_`를 통해 내부 속성값을 접근할 수 있다.
+
+`ProductContent` Entity 객체의 product 속성 값에 접근해서 N대1 관계인 `ProductContent`와 `Product` 두 테이블을 **Left Join**해서 쿼리를 요청할 수 있다.
+
+```java:ProductContentRepository
+public interface ProductContentRepository extends JpaRepository<ProductContent, Long> {
+
+    List<ProductContent> findByProduct_ProductId(Long id);
+    List<ProductContent> findByProduct_ProductName(String name);
+}
+```
+
+`ProductContentRepository`에서 `findByProduct_ProductId`는 프록시 객체인 id만 참조하기 때문에 **Left Join**이 발생하지 않는다.
+하지만, `findByProduct_ProductId`로 얻은 ProductContent 객체 내부의 Product 속성 중 id를 제외한 속성을 참조하면 **N+1**문제가 발생할 것이다.
+
+`findByProduct_ProductName`을 사용하면 ProductContent Entity의 Product 속성 중 내부 속성인 **name**을 검색하기 때문에
+SQL 쿼리를 작성할 때 **Left Join**이 적용되어서 DB에 요청된다. 실제 요청에 따른 쿼리는 아래와 같다.
+
+```
+select p1_0.content_id,p1_0.content_img_url,p1_0.product_id
+  from product_content p1_0
+  left join product p2_0
+  on p2_0.product_id=p1_0.product_id
+where p2_0.product_name=?
+```
 
 ## Page vs Slice
+
+JPA Repository 메서드 중 `Page`와 `Slice` 자료형을 출력하는 메서드는 쿼리의 결과 중 특정 개수의 row data에 대해서만 응답하도록한다.
+하지만, 아래 그림과 같이 `Page`는 `Slice`를 상속 받으며 전체 페이지와 **전체 Element** 개수를 검색하는 것을 확인할 수 있다.
+
+<img src="/static/images/spring/spring-page-slice.png" alt="page와 slice의 차이점" />
+
+Page는 조건에 따른 전체 요소 개수를 세기위해서 `count` 쿼리를 한번 더 요청하는 문제가 있다.
+그렇기 때문에 데이터가 급변하지 않는다면, 초기에 한번 `count`쿼리를 날려서 전체 개수를 얻고,
+`Slice`를 사용하여 page에 따른 요소를 얻는 것이 단순히 `Page`를 사용하는 것보다 적절할 것이다.
 
 ## JPA Repository 메서드로 DTO Projection 하기
