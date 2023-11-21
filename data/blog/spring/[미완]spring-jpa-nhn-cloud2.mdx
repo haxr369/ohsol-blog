@@ -58,3 +58,30 @@ Page는 조건에 따른 전체 요소 개수를 세기위해서 `count` 쿼리�
 `Slice`를 사용하여 page에 따른 요소를 얻는 것이 단순히 `Page`를 사용하는 것보다 적절할 것이다.
 
 ## JPA Repository 메서드로 DTO Projection 하기
+
+JPA Repository 메서드로 Entity를 DTO로 Projection하는 방법은 아래와 같이 3가지 방법이 있다.
+
+- Class 기반 Projection
+- Interface 기반 Projection
+- Dynamic Projuection
+
+### Class 기반 Projection
+
+아래와 같이 DTO에 `final`로 선언된 필드를 JPA Repository의 출력 자료형으로 사용하면 `final` 필드와 동일한 컬럼만
+쿼리의 결과로 나오게된다.
+
+```java:MemberDto.java
+@Value
+public class MemberDto{
+  private final String name;
+  private final LocalDate createDate;
+}
+```
+
+```java:MemberRepository.java
+public interface MemberRepository extends JpaRepository<Member, Long>{
+  Collection<MemberDto> findByName(String name);
+}
+
+// name과 create_date 컬럼만 쿼리된다. -> SQL 자체적으로 DTO projection 가능!
+```
