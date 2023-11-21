@@ -1,0 +1,55 @@
+---
+title: AWS S3 보안
+date: 2023-11-11
+lastmod: 2023-11-11
+tags: ['AWS', 's3', 'security', 'DVA-C02']
+draft: false
+summary: 'AWS S3의 보안에 관련된 내용 정리'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+이번 포스팅은 [AWS S3 (1)](/blog/aws/aws-s3-basic)과 [AWS S3(2)](/blog/aws/aws-s3-advence)에 이어서 S3의 보안에 관련된 내용을 다룬다.
+
+## 객체 암호화
+
+AWS S3는 4가지 방법으로 객체를 암호화할 수 있다.
+
+- **Server-Side Encryption(SSE)** : 서버 측에서 암호화한 다음 S3에 업로드
+  - SSE-S3 방식은 S3 Managed Keys로 암호화한다. (버킷 기본 설정) AWS에서 암호화 키를 소유하고 관리하기 때문에 사용자는 키에 접근할 수 없다. 또한 헤더에 `"X-amz-server-side-encryption":"AES256"`을 설정해야한다.
+  - SSE with KMS는 AWS KMS로 객체를 암호화. Key Mangement Service(KMS) 서비스를 사용해 키와 사용자의 키 사용을 감시한다. 만약 누군가가 KMS에서 키를 사용하면 CloudTrail 서비스에 로그가 남는다. `CloudTrail`은 AWS에서 일어나는 모든 일을 로그로 남긴다. 또한 헤더에 `"x-amz-server-side-encryption":"aws:kms"`를 설정해야한다.
+  - SSE with Customer-provided Keys (SSE-C) 사용자가 직접 암호화 키를 제공. 키는 외부에서 관리되지만 서버에서 암호화를 진행하기 때문에 SSE에 포함된다. AWS는 사용자의 키를 사용 후 폐기한다. **HTTPS** 통신을 사용해야 하며, 모든 HTTP 요청의 헤더에 키를 전달해야 한다.
+- **Client-Side Encryption(CSE)** : 클라이언트 측에서 암호화한 다음 S3에 업로드. **클라이언트 측**에서 자체적인 암호화 라이브러리를 사용하면 데이터를 **직접** 암호화하고 S3에 전송한다. 당연히 **복호화**는 S3 외부 클라이언트에서 수행한다.
+
+### SSE-KMS 주의점
+
+**SSE-KMS**는 S3에 파일을 업로드하거나 다운로드할 때 KMS 키를 활용해야한다. 또한 KMS는 자체 API가 있어서 키를 불러올 때 `GenerateDataKey` 키 요청이나 `Decrypt` 같이 복호화 API를 요청해야한다.
+이러한 KMS API **호출**은 리전에 따라 초당 **5,000 ~ 30,000**회의 요청을 처리하도록 **제한**되어 있다.
+그렇기 때문에 객체가 매우매우 많을 경우 **KMS 키를 사용하여** 모든 것이 암호화되므로 **주의**해야한다.
+
+## 전송 중 암호화
+
+**HTTP** 통신에서 **전송 중 암호화**는 SSL 혹은 TLS라고 한다. 기본적으로 S3에는 **HTTP Endpoint**와 **HTTPS Endpoint**가 존재한다.
+
+따라서 S3를 사용할 때 데이터를 안전하게 전송하기 위해서 **HTTPS**를 사용하기를 권장한다. 또한 **사용자**의 **암호화 키**가 네트워크 올라가는 **SSE-C** 방식은 **HTTPS** 프로토콜 사용이 필수이다.
+
+### 강제로 전송 중 암호화
+
+S3 버킷에 **버킷 정책**을 추가하고 **Statement**에 "`aws:SecureTransport가 false`일 때 모든 `GetObject` Action을 `Deny`한다"고 작성하면,
+무조건 버킷에 객체를 업로드할 때 **전송 중 암호화**를 강제할 수 있다.
+
+## S3의 CORS
+
+CORS는 **교차 오리진 리소스 공유**이다. 예를 들어 `https://www.example.com`을 보면 암시적 포트는 https에대해 **443**이며 도메인은 **www.example.com**이다.
+CORS는 **기본 오리진**에 방문할 때 **다른 오리진**에 대한 요청을 **허용**하거나 **거부**하는 웹 브라우저 기반 **보안 메커니즘**
+
+동일한 체계, 동일 호스트, 동일 포트가 있는 동일한 오리진을 고유하는 두개의 URL가 있는 반면, `www.example.com`이나 `other.example.com` 같이 다른 오리진의 URL이 있을 수 있다.
+다른 오리진의 웹 서버가 CORS 정책을 설정하여 **CORS 헤더**에 알려주지 않는다면 기본적으로 브라우저는 요청을 하지 않는다.
+
+클라이언트가 S3 버킷에 교차 오리진 요청을 보낼 경우 올바른 CORS 헤더를 활성화해야한다.
+이를 해결하기 위해 S3는 특정 오리진을 허용하거나 **\***을 통해 모든 오리진의 요청을 허가해야한다.
+
+예를 들어 S3 버킷으로 정적 웹 사이트가 배포되어 `www.example.com` 웹사이트에 접속했다. 그리고 다른 S3 버킷인 `other.example.com`에 있는 이미지를 `www.example.com`에서 얻으려고 한다.
+두 URL은 오리진이 다르기 때문에 교차 오리진 요청이 되고, S3 버킷이 올바른 **CORS 헤더**를 갖도록 구성되어 있지 않으면 요청을 거부하게 된다.
