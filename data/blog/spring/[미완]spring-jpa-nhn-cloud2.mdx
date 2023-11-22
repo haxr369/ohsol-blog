@@ -85,3 +85,89 @@ public interface MemberRepository extends JpaRepository<Member, Long>{
 
 // name과 create_date 컬럼만 쿼리된다. -> SQL 자체적으로 DTO projection 가능!
 ```
+
+### Interface 기반 Projection
+
+아래와 같이 `Member` Entity가 있을 때, Entity class 필드의 **getter**를 정의한 **interface** `MemberNameOnly`를 작성할 수 있다.
+
+```java:Memver.java
+@Entity
+@Table(name="Members")
+public class Member{
+  private String name;
+}
+```
+
+```java:MemberNameOnly.java
+public interface MemberNameOnly {
+  String getName();
+}
+```
+
+위처럼 Entity와 Interface를 정의하고, JPA Repository의 **출력 자료형**에 **Interface**를 넣으면
+
+```java:MemberRepository.java
+public interface MemberRepository extends JpaRepository<Member, Long>{
+  Collection<MemberNameOnly> findByCreateDateAfter(LocalDateTime createDate);
+}
+
+// select name from Members
+// where create_dt > {createDate}
+```
+
+Spring Data JPA가 실제 구현 객체는 **프록시**로 만들어서 출력하게된다.
+그리고 Interface 기반 Projection은 **중첩 구조**를 지원한다.
+
+```java:Memver.java
+@Entity
+public class Member{
+  private String name;
+  @OneToMany
+  private List<MemberDetail> details;
+}
+
+@Entity
+public class MemberDetail{
+  @EmbeddedId
+  private Pk pk;
+  private String description;
+  @EmbeddedId public static class Pk{
+    private String type;
+  }
+}
+```
+
+예를 들어 `Member`에 `List<MemberDetail>` 이라는 필드가 존재할 때 아래와 같이 Interface를 작성할 수 있다.
+
+```java:MemberDto.java
+public interface MemverDto{
+  String getName();
+  List<MemberDetailDto> getDetails();
+
+  interface MemberDetail{
+    @Value("#{target.pk.type}")
+    String getType();
+    String getDescription();
+  }
+}
+```
+
+`@Value`를 통해서 타켓을 설정하고, 인터페이스의 중첩 구조를 통해 Spring Data JPA의 출력 DTO를 정의할 수 있다.
+
+## Dynamic Projection
+
+**Dynamic Projection**은 기본 Projection 방법들과 다르게 제네릭을 이용해서 출력 자료형이 정해지지 않고
+JPA Repository method로 쿼리의 **조건**만 정의해 놓아서 유연한 사용을 할 수 있다.
+
+```java:MemberRepository.java
+public interface MemberRepository extends JpaRepository<Member, Long>{
+  <T> Collection <T> findByCreateDateAfter(LocalDate createDate, Class<T> type);
+}
+```
+
+위 메서드는 아래와 같이 사용할 수 있다.
+
+```java:example.java
+Collection<MemberNameOnly> nameOnlies = memberRepository.findByCreateDateAfter(LocalDateTime.now(), MemberNameOnly.class)
+Collection<MemberDto> nameOnlies = memberRepository.findByCreateDateAfter(LocalDateTime.now(), MemberDto.class)
+```
