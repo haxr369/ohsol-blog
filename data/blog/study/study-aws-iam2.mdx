@@ -12,7 +12,7 @@ summary: 'AWS IAM으로 역할 권한 설정하기'
 <TOCInline toc={props.toc} exclude="목차" toHeading={2} />
 
 이번 포스팅은 [ASAC 주간 스터디](tags/ASAC-Weekly-Study)로 [AWS IAM 및 CLI](/blog/aws/aws-iam)와
-[AWS CLI,SDK, IAM 역할 및 정책](/blog/aws/aws-cli-sdk-iam) 그리고
+[AWS CLI,SDK, IAM 역할 및 정책](/blog/aws/aws-cli-sdk-iam1) 그리고
 [AWS IAM과 실습 1](/blog/study/study-aws-iam1)에서 배운 내용을
 실제 프로젝트에 적용할 수 있도록 사용법을 정리한다.
 
@@ -26,3 +26,33 @@ IAM에는 3가지 종류가 있다.
 1. **IAM 권한** : 유저나 그룹이 **어떤 행위(ex: 그룹에 유저 추가, S3에 접근)**를 할 수 있는가?
 2. **IAM 정책** : 유저나 그룹의 권한을 정의하는 **문서**
 3. **IAM 역할** : 어떤 AWS 서비스가 **어떤 행위(ex: S3에 접근)**를 할 수 있는가?
+
+## IAM 역할
+
+AWS 서비스는 사용자 대신 **사용자의 계정**을 이용해 작업을 수행한다.
+그리고 이런 작업을 하려면 **권한**이 필요하다. 이를 위해 **IAM 역할**을 생성해야한다. 예를 들어 `EC2 Instance Roles`, `Lambda Function Roles` 등이 존재한다.
+
+### IAM 역할 만들기
+
+1. IAM 대시보드에서 역할을 선택하고 **역할 생성** 버튼을 누른다.
+
+다음으로 다양한 엔티티를 선댁할 수 있는데 AWS 서비스를 선택한다.
+여기서 **엔티티**란 **IAM 역할**과 작업을 수행하는 **주체**(EC2 인스턴스)를 묶은 것을 의미한다.
+
+어떤 주체에게 역할을 부여할지는 **사용 사례**에서 정할 수 있다.
+
+<img src="/static/images/study/study-iam-role1.png" alt="iam role 실습" />
+
+2. 권한 정책 추가하기
+
+[이전 포스팅](/blog/aws/aws-cli-sdk-iam1)에서 그룹에 정책을 연결했던 것처럼 **IAM 역할**에도 **IAM 정책**을 연결할 수 있다.
+
+<img src="/static/images/study/study-iam-role2.png" alt="iam role에 정책 연결" />
+
+3. 역할 이름 정하기
+
+<img src="/static/images/study/study-iam-role3.png" alt="iam role 이름 설정" />
+
+위 이미지처럼 **역할 이름**과 inline으로 작성된 **IAM 정책**을 확인할 수 있다.
+
+## EC2에 IAM 역할 설정하기
