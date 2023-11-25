@@ -1,8 +1,8 @@
 ---
-title: [ASAC 주간 스터디] AWS IAM과 실습 2
+title: [ASAC 주간 스터디] AWS IAM과 보안그룹 실습
 date: 2023-11-25
 lastmod: 2023-11-25
-tags: ['AWS', 'IAM','EC2', 'S3','ASAC-Weekly-Study']
+tags: ['AWS', 'IAM','EC2', 'SG', 'S3','ASAC-Weekly-Study']
 draft: false
 summary: 'AWS IAM으로 역할 권한 설정하기'
 ---
@@ -55,4 +55,48 @@ AWS 서비스는 사용자 대신 **사용자의 계정**을 이용해 작업을
 
 위 이미지처럼 **역할 이름**과 inline으로 작성된 **IAM 정책**을 확인할 수 있다.
 
-## EC2에 IAM 역할 설정하기
+## EC2로 역할 확인하기
+
+1. AWS Linux로 EC2 생성하기
+
+AWS Linux로 EC2 생성하면 `aws cli`를 자동으로 설치해준다.
+iam 사용자 리스트를 확인하기 위해서 `aws iam list-users`를 명령하면 아래와 같이 에러가 뜬다.
+
+```
+[ec2-user@ip-172-31-37-53 ~]$ aws iam list-users;
+Unable to locate credentials. You can configure credentials by running "aws configure".
+```
+
+위와 같이 떠서 EC2에 직접 `Access Key ID`, `Secret Access Key`와 같은 자격증명을 넣게되면 이 계정 상의 누구라도 다시 EC2 인스턴스 커넥트를 통해
+정보를 볼 수 있다. 그렇기 때문에 **무조건** `iam api 키`를 입력하면 안된다.
+
+2. EC2 인스턴스에 IAM 역할 부여하기
+
+이전에 만들어둔 IAM 역할을 찾아서 부여하는 방법은 EC2 대시보드에서 IAM 역할 수정을 원하는 인스턴스의 대시보드로 가서
+**IAM 역할 수정**을 누른다. 그렇다면 아래와 같이 사전에 만들어둔 **IAM 역할**을 볼 수 있다.
+
+<img src="/static/images/study/study-iam-role4.png" alt="iam role 이름 설정" />
+
+위 IAM 역할 중 **S3ReadOnlyForEC2**를 선택해서 업데이트한다. 그럼 아래처럼 IAM 역할이 부여된다.
+
+<img src="/static/images/study/study-iam-role5.png" alt="iam role 이름 설정" />
+
+3. EC2가 S3에 접근하기
+
+위처럼 EC2 인스턴스에 IAM 역할을 부여하면 아래처럼 s3 버킷 읽기가 가능하다.
+
+```
+[ec2-user@ip-172-31-37-53 ~]$ aws s3 ls
+2023-11-15 06:28:51 codepipeline-ap-northeast-2-719049025235
+2023-11-06 16:53:12 elasticbeanstalk-ap-northeast-2-533385215525
+2023-11-15 06:29:29 sol-codedeploy-demo
+```
+
+또한 버킷 속 객체를 읽을 수 있다.
+
+```
+[ec2-user@ip-172-31-37-53 ~]$ aws s3 ls s3://sol-codedeploy-demo
+2023-11-15 06:51:56       5859 Deploy.zip
+2023-11-15 05:41:03       5333 SampleApp_Linux.zip
+2023-11-22 00:10:26   43737385 deploy.zip
+```
