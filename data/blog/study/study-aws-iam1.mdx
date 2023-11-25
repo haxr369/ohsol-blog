@@ -1,0 +1,131 @@
+---
+title: [ASAC 주간 스터디] AWS IAM과 실습 1
+date: 2023-11-25
+lastmod: 2023-11-25
+tags: ['AWS', 'IAM','ASAC-Weekly-Study']
+draft: false
+summary: 'AWS IAM으로 계정 권한 설정하기'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={2} />
+
+이번 포스팅은 [ASAC 주간 스터디](tags/ASAC-Weekly-Study)로 [AWS IAM 및 CLI](/blog/aws/aws-iam)와
+[AWS CLI,SDK, IAM 역할 및 정책](https://ohsol-blog.vercel.app/blog/aws/aws-cli-sdk-iam)에서 배운 내용을
+실제 프로젝트에 적용할 수 있도록 사용법을 정리한다.
+
+이번 포스팅의 목표는 `root` 계정을 사용하지 않고 **최소한** 역할을 가진 **EC2** 인스턴스가 **S3**에 접근해서 객체(이미지)를 얻을 수 있게
+설정하는 것이다.
+
+## IAM 종류
+
+IAM에는 3가지 종류가 있다.
+
+1. **IAM 권한** : 유저나 그룹이 **어떤 행위(ex: 그룹에 유저 추가, S3에 접근)**를 할 수 있는가?
+2. **IAM 정책** : 유저나 그룹의 권한을 정의하는 **문서**
+3. **IAM 역할** : 어떤 AWS 서비스가 **어떤 행위(ex: S3에 접근)**를 할 수 있는가?
+
+### IAM 사용자 생성법
+
+aws 계정을 만들면, 모든 권한을 가진 `root` 계정이 생성된다. 하지만, 이 root 계정을 **직접** 사용하는 것은 위험하기 때문에
+**권한**이 설정된 **그룹**을 생성하고, 그 그룹에 유저를 추가해서 사용해야한다. 정리하면 아래와 같다.
+
+<img src="/static/images/study/study-iam-group-overview.png" alt="iam 그룹 실습 오버븊" />
+
+1. root 계정으로 IAM 대시보드
+
+IAM은 글로벌 서비스기 때문에 region을 선택할 필요가 없다.
+
+<img src="/static/images/study/study-iam-group-1.png" alt="root 계정으로 대시보드 들어가기" />
+
+2. IAM 유저 생성하기
+
+창업하고 첫 신입이 보안팀으로 입사했다. **보안팀의 권한**에 맞는 **IAM 유저**를 생성해서 제공할 수 있다.
+사용자 아래 숫자를 클릭하면 **사용자 대시보드**가 나온다.
+
+<img src="/static/images/study/study-iam-group-2.png" alt="IAM 사용자 생성하기1" />
+
+그 다음 **사용자 이름**과 사용자 지정 **암호**를 입력하고 다음을 클릭한다.
+
+<img src="/static/images/study/study-iam-group-3.png" alt="IAM 사용자 생성하기2" />
+
+사용자의 **권한**을 설정하기 위해 그룹에 사용자 추가를 선택하고 **그룹 생성** 버튼을 누른다.
+
+<img src="/static/images/study/study-iam-group-4.png" alt="그룹 생성하기" />
+
+그 다음 `security` 그룹을 생성하고, 그룹에 유저를 추가한다. 마지막으로 유저에 태그를 추가하여 보안팀임을 알린다.
+
+<img src="/static/images/study/study-iam-group-5.png" alt="태그 설정" />
+
+### IAM 그룹 만들기
+
+**보안팀**인 당신은 곧 만들어질 개발팀을 위해 **개발팀1**과 **개발팀2** 그룹을 만들고 권한을 부여하려고 한다.
+
+1. IAM 유저 로그인
+
+IAM 유저는 아래와 같은 특정한 URL을 통해 접속하거나 AWS 콘솔에서 IAM 사용자로 로그인할 수 있고, 이 때 계정 생성할 때 작성한 사용자 **이름**과 **암호**를 작성해야한다.
+
+```
+https://533385215525.signin.aws.amazon.com/console
+```
+
+로그인을 성공하면 아래와 같이 `securityUser1` 계정으로 접속할 수 있다.
+
+<img src="/static/images/study/study-iam-group-6.png" alt="iam 유저 로그인" />
+
+2. 개발팀 그룹 만들기
+
+사용자를 생성할 때처럼 `IAM 대시보드`에서 사용자 그룹 아래 숫자를 클릭하면 `사용자 그룹 대시보드`가 뜬다.
+대시보드에서 **그룹 생성** 버튼을 누르면 그룹을 만들 수 있다.
+
+사용자 만들 때와 동일하게 그룹 생성할 때도 권한을 추가할 수 있다. 그룹을 생성하면 아래와 같이 볼 수 있다.
+
+<img src="/static/images/study/study-iam-group-7.png" alt="개발1팀 그룹 권한" />
+
+개발팀의 사용자를 만드는 것은 [IAM 사용자 생성법](/blog/study/study-aws-iam#IAM-사용자-생성법)을 참고하면된다.
+또한 개발2팀 그룹 생성도 위와 같이 하면된다.
+
+### IAM 정책 - inline으로 권한 부여하기
+
+팀장님 IAM 계정 만들기위해서 두 팀이 가진 **모든 권한**을 가진 **IAM 정책**을 생성하고 부여해야한다.
+[IAM 정책 구조](https://ohsol-blog.vercel.app/blog/aws/aws-iam#%EC%A0%95%EC%B1%85-%EA%B5%AC%EC%A1%B0)는 간단히 **Statement** 안에
+어떤 권한을 허가할지 거부할지 작성한다.
+
+실제로 그룹에 권한을 추가할 때 아래처럼 **정책**을 추가할 수 있다.
+
+<img src="/static/images/study/study-iam-group-8.png" alt="그룹 정책 추가" />
+
+하지만 아래처럼 `inline`으로 정책을 설정할 수 있다.
+
+```json:iam-policy.json
+{
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Sid": "Statement1",
+			"Effect": "Deny",
+			"Action": [
+				"rds-db:*",
+				"ec2:*"
+			],
+			"Resource": [
+				"*"
+			]
+		},
+		{
+			"Sid": "Statement2",
+			"Effect": "Allow",
+			"Action": [
+				"iam:*",
+				"rolesanywhere:*"
+			],
+			"Resource": [
+				"*"
+			]
+		}
+	]
+}
+```
+
+<img src="/static/images/study/study-iam-group-9.png" alt="그룹 정책 정리" />

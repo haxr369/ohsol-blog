@@ -1,0 +1,28 @@
+---
+title: [ASAC 주간 스터디] AWS IAM과 실습 2
+date: 2023-11-25
+lastmod: 2023-11-25
+tags: ['AWS', 'IAM','EC2', 'S3','ASAC-Weekly-Study']
+draft: false
+summary: 'AWS IAM으로 역할 권한 설정하기'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={2} />
+
+이번 포스팅은 [ASAC 주간 스터디](tags/ASAC-Weekly-Study)로 [AWS IAM 및 CLI](/blog/aws/aws-iam)와
+[AWS CLI,SDK, IAM 역할 및 정책](/blog/aws/aws-cli-sdk-iam) 그리고
+[AWS IAM과 실습 1](/blog/study/study-aws-iam1)에서 배운 내용을
+실제 프로젝트에 적용할 수 있도록 사용법을 정리한다.
+
+이번 포스팅의 목표는 `root` 계정을 사용하지 않고 **최소한** 역할을 가진 **EC2** 인스턴스가 **S3**에 접근해서 객체(이미지)를 얻을 수 있게
+설정하는 것이다.
+
+## IAM 종류
+
+IAM에는 3가지 종류가 있다.
+
+1. **IAM 권한** : 유저나 그룹이 **어떤 행위(ex: 그룹에 유저 추가, S3에 접근)**를 할 수 있는가?
+2. **IAM 정책** : 유저나 그룹의 권한을 정의하는 **문서**
+3. **IAM 역할** : 어떤 AWS 서비스가 **어떤 행위(ex: S3에 접근)**를 할 수 있는가?
