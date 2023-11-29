@@ -1,0 +1,36 @@
+---
+title: JAVA record class에 대해서
+date: 2023-11-27
+lastmod: 2023-11-27
+tags: ['java', 'record']
+draft: false
+summary: 'JAVA의 record 자료형에 대해서 알아보기'
+---
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## Java의 record 자료형이란
+
+**Java record**는 Java 14에 처음 등장한 자료형이다. `immutable` 클래스들을 간편하게 정의하고 생성하기 위해서 사용한다.
+또한 **record**는 생성자나 캡슐화된 필드, 접근자나 다른 공통적인 method를 자동적으로 생성해준다.
+아래 4가지 특징이 **JAVA Records**를 만든 동기이다.
+
+1. **간결성(Conciseness)** : record는 보일러플레이트 코드(반복적인 코드)를 자동적으로 생성한다. 예를 들어 `equals()`, `hashCode()`, `toString()` 같은 필드 접근자들을 자동으로 만들어준다.
+2. **불변성(immutablility)** : record는 기본적으로 불변적이도록 디자인됐다. 즉 한번 객체를 만들면 그 객체를 수정 할 수 없게하여 **VO**처럼 데이터 무결성과 일관성이 필요한 곳에 적절하다.
+3. **가독성(Readability)** : record는 클래스의 필드를 명확하게 볼 수 있어 가독성을 높일 수 있다.
+4. **정합성(Pattern matching)** : 데이터 추출이나 압축을 용이하게 만들어준다.
+
+## Java record 사용법
+
+```java:RequestDto.java
+public class RequestDto {
+
+    @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
+    public record GetConditionalTicketListDto(
+
+    ){}
+
+}
+```
+
+위와 같이
