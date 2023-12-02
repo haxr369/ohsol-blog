@@ -1,7 +1,7 @@
 ---
 title: JAVA record class에 대해서
-date: 2023-11-27
-lastmod: 2023-11-27
+date: 2023-12-02
+lastmod: 2023-12-02
 tags: ['java', 'record']
 draft: false
 summary: 'JAVA의 record 자료형에 대해서 알아보기'
@@ -27,10 +27,24 @@ public class RequestDto {
 
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record GetConditionalTicketListDto(
-
-    ){}
-
+        Long id,
+        String company,
+        String riskRank,
+        String sourceIp
+    ){
+        public static GetConditionalTicketListDto from(Ticket ticket){
+            return new GetConditionalTicketListDto(
+                ticket.getId(),
+                ticket.getCompany(),
+                ticket.getRiskRank(),
+                ticket.getSourceIp()
+            )
+        }
+    }
 }
 ```
 
-위와 같이
+record 클래스를 사용하는 방법은 **record** 안에 필드를 작성하고 `{}`에 사용하고 싶은 메서드를 정의할 수 있다.
+보통 record는 **VO**를 만들 때 사용한다고 한다.
+
+JAVA 14버전 이상에서 지원하기 때문에 널리 사용되지는 않지만, 이번 프로젝트에서 사용하게 되어 정리했다.
