@@ -1,8 +1,8 @@
 ---
-title: Transaction에서 Lock 실습
+title: Spring Transaction 실습
 date: '2023-12-03'
 lastmod: '2023-12-03'
-tags: ['db', 'Transaction', 'lock', 'jpa']
+tags: ['db', 'spring', 'Transaction', 'lock', 'jpa']
 draft: false
 summary: 'Transaction을 위한 Lock과 사용법'
 ---
@@ -11,7 +11,7 @@ summary: 'Transaction을 위한 Lock과 사용법'
 
 <TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
 
-이번 포스팅은 [Transaction에서 Lock 개념](/blog/db/db-transaction-lock)을 실습하기 위해 작성한다.
+이번 포스팅은 Spring에서 제공하는 동시성 제어 방법인 `@Transactional`과 [Transaction Isolation Level 4가지](/blog/db/transaction-isolation)에 대해 실습한다.
 또한 모든 코드는 [com.solsol.lock](https://github.com/haxr369/lock-concurrent)을 통해 실행시킬 수 있다.
 
 ## Non-Repeatable Read 상황 만들기
