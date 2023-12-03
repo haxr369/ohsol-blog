@@ -116,7 +116,7 @@ ECS task 수를 수동으로 늘린다면 서버리스의 장점이 퇴색된다
 ECS 업데이트가 있을 때 새로운 **task 정의 숫자**를 선택하고 ECS 서비스를 업데이트하고자 할 때는 **최소 상태 비율(Minimum healthy percent)**와
 **최대 비율(Maximum percent)**인 2가지 지표를 설정할 수 있다. 각각의 기본 값은 100과 200이다.
 
-<img src="/images/static/aws/aws-ecs-task-auto-scaling.png" alt="ecs task의 확장 비율 설정" />
+<img src="/static/images/aws/aws-ecs-task-auto-scaling.png" alt="ecs task의 확장 비율 설정" />
 
 위 그림처럼 무중단 배포를 위해 최소 상태 비율과 최대 비율의 설정 값에 따라 기존 버전의 task를 얼마나 종료하고, 새로운 버전의 task를 얼마나 생성할지 결정할 수 있다.
 아래와 같은 **순서**로 무중단 배포가 진행된다.

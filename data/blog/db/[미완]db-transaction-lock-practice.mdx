@@ -15,7 +15,7 @@ summary: 'Transaction을 위한 Lock과 사용법'
 
 ## 문제 상황 만들기
 
-<img src="/images/static/db/db-transaction-lock-problem1.png" alt="문제 상황 1번" />
+<img src="/static/images/db/db-transaction-lock-problem1.png" alt="문제 상황 1번" />
 
 위와 같이 사용자가 티켓 확인을 한 transaction에서 두번 수행하는데 중간에 관리자가 티켓 상태를 `Open`에서 `Close`로 바꿔버리는 상황이다.
 **Read commited** 격리 수준이라면, 사용자가 **두번째** 읽을 때 `Close`된 티켓을 확인할 것이고,

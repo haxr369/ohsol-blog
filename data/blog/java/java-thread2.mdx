@@ -1,0 +1,276 @@
+---
+title: Java에서 Thread, Synchronization 2
+date: 2023-12-03
+lastmod: 2023-12-03
+tags: ['java', 'thread', 'synchronization', 'deadlock', 'lock', 'concurrent-programming']
+draft: false
+summary: 'Thread 개념을 이해하고 Java의 다중 Thread와 Synchronization 방법을 정리한다.'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+이번 포스팅은 이전에 [Java에서 Thread, Synchronization 1](/blog/java/java-thread1)에서 소개한
+**Multi Thread**, **Synchronization**, 그리고 **deadlock**에 대한 해결책인 `wait & notify`에 이어서
+
+## 기아 현상과 경쟁 상태
+
+동기화로 인한 **deadlock**을 해결하기 위해 `wait`과 `notify`, 그리고 `notifyAll`을 사용했지만,
+몇몇 상황에서 아래와 같이 문제가 발생할 수 있다.
+
+### 기아 현상
+
+만약 요리사 쓰레드가 계속 통지를 받지 못하고 **오랫동안 기다리게 되면** 이를 **기아 현상**이라 한다.
+이를 해결하기 위해 `notifyAll`과 같은 방법으로 모든 쓰레드에게 작업을 시작하도록 알릴 수 있다.
+
+### 경쟁 상태
+
+이전 포스팅에서 등장한 그림을 보자
+
+<img src="/static/images/java/java-thread-deadlock1.png" alt="요리사가 음식을 추가할 때" />
+
+`notifyAll`로 요리사는 **음식을 추가**하기위해, 고객는 **음식을 먹기**위해 테이블의 lock을 얻으려고 **경쟁**한다.
+**여러 쓰레드가 lock을 얻기 위해 서로 경쟁하는 것**을 **경쟁 상태**(race condition)이라 한다.
+
+위와 같은 경쟁 상태를 해결하기 위해 모든
+
+## Lock과 Condition을 이용한 동기화
+
+synchronization 블럭(임계영역)으로 동기화를 하면 자동적으로 lock이 잠기고 풀기기 때문에 편리하지만,
+같은 메서드 내에서만 lock을 걸 수 있다는 제약이 불편하다.
+
+동기화할 수 있는 방법은 `synchronization` 블럭 외에도 `java.util.concurrent.locks` 패키지가 제공하는
+lock 클래스들을 이용하는 방법이 있다. lock 클래스는 다음과 같이 3가지가 있다.
+
+- **ReentrantLock** : 재진입이 가능한 lock, 가장 일반적인 배타 lock
+- **ReentrantReadWriteLock** : 읽기에는 공유적이고, 쓰기에는 배타적인 lock
+- **StampedLock** : ReentrantReadWriteLock에 낙관적인 lock의 기능을 추가
+
+ReentrantLock은 가장 일반적인 lock이다. `Reentrant`(재진입할 수 있는)이라는 단어는 앞서 `write`와 `notify`처럼
+특정 조건에서 lock을 풀고 다시 lock을 얻어 임계영역으로 들어와서 이후 작업을 수행할 수 있기 때문이다.
+지금까지 사용한 lock과 동일하다.
+
+ReentrantReadWriteLock는 읽기를 위한 lock과 쓰기를 위한 lock이 존재한다.
+lock이 있어야 객체에 접근할 수 있는 ReentrantLock과 달리, ReentrantReadWriteLock는 읽기 lock이 걸려있으면, 다른 쓰레드가 읽기 lock을 중복해서 걸고 읽기를 수행할 수 있다.
+읽기나 쓰기 lock이 걸려있으면 쓰기만 lock이 걸리는 것이다.
+
+StampedLock은 lock을 걸거나 해지할 때 `스탬프`를 사용하며,
+읽기과 쓰기를 위한 lock외에 **낙관적 읽기 lock**(optimistic reading lock)이 추가된 것이다.
+쓰기위해 읽기 lock이 풀릴 때까지 기다리는 ReentrantReadWriteLock는과 달리 **StampedLock**은 **일단 쓰기가 가능**하다.
+하지만 스탬프의 변화로 쓰기를 적용할 때
+
+## ReentrantLock 예시
+
+아래 `Table`처럼 공유하려는 **객체**에 **lock**을 생성하고 객체를 공유하려는 **쓰레드**에 **Condition**을 생성한다.
+`lock.lock()`으로 임계영역을 **시작**하고 `lock.unlock()`으로 임계영역을 끝맺는다.
+또한 기존 `wait & notify`는 `forCustomer.await()`과 `forCustomer.signal()`로 대체되어 어느 쓰레드에게 작업을 **시작**할지 명시해줄 수 있다.
+
+**요리사**가 음식을 **추가**하고 모든 **고객**에게 음식을 먹도록 알리면 고객들끼리 테이블의 lock을 얻기위해 race condition에 놓인다.
+그렇기 때문에 요리사가 생성한 음식에 따라 **조건적**으로 **어떤 고객**에게 음식을 **먹도록**할지 결정할 수 있다.
+
+### 음식 만들면 전체 고객에게 알리기
+
+고객에 음식을 먹을 때마다 먹은 수를 출력했을 때 음식 조건을 추가하지 않은 아래와 같은 `Table`은 보통 28회 내외로 먹는다.
+
+```java:Table.java
+@Slf4j
+public class Table {
+    String[] dishName = {"donut", "donut", "burger"}; //donut을 더 자주 추가한다.
+    final int MAX_FOOD = 6; // 테이블에 놓을 수 있는 음식 수.
+    private ArrayList<String> dishes = new ArrayList<>();
+    int eatCount = 0;
+
+    // ReentrantLock을 Chef와 Customer에 대해 생성
+    private ReentrantLock lock = new ReentrantLock();
+    private Condition forChef = lock.newCondition();
+    private Condition forCust = lock.newCondition();
+
+    public void add(String dish){
+        lock.lock(); // 임계 영역 생성
+        try {
+            // 테이블에 음식이 가득찼으며 테이블에 음식을 추가하지 않는다.
+            while (dishes.size() >= MAX_FOOD) {
+                String name = Thread.currentThread().getName();
+                log.info(name + "is waiting.");
+                try {
+                    forChef.await(); //Chef에게 음식이 충분하니 기다리게 (lock 반납하게) 한다.
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {
+                }
+            }
+            dishes.add(dish);
+            forCust.signal(); // 음식을 기다리던 고객에게 음식을 채웠음을 알린다.
+            log.info("Dishes: "+ dishes);
+        } finally {
+            lock.unlock();
+        }
+
+    }
+    public void remove(String dishName){
+        lock.lock();
+        try {
+            String name = Thread.currentThread().getName();
+            while(dishes.size()==0){
+                log.info(name+" is wating.");
+                try{
+                    forCust.await(); // 고객에게 음식이 없으니 기다리게 (lock 반납하게) 한다.
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {}
+            }
+            while(true){
+                for(int i=0; i<dishes.size(); i++){ // 지정된 요리와 일치하는 요리를 테이블에서 제거한다.
+                    if(dishName.equals(dishes.get(i))){
+                        dishes.remove(i);
+                        eatCount++;
+                        log.info("new eat count is "+eatCount);
+                        forChef.signal(); // 음식 수가 줄었으니 요리사에게 알린다.
+                        return;
+                    }
+                }
+                try{
+                    log.info(name + " is waiting.");
+                    forCust.await(); // 원하는 음식이 없는 고객을 기다리게한다.
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {}
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+    public int dishNumb(){return dishName.length;}
+}
+```
+
+### 테이블에 고객이 원하는 음식이 있을 때 고객에게 알리기
+
+고객1은 도넛을, 고객2는 버거를 좋아하는 것을 이미 알기 때문에 요리사가 만든 음식에 따라 다른 고객에게 **알림**을 준다면
+고객끼리 같은 waitpool에서 테이블 lock을 기다리느 **경쟁 상태**를 줄일 수 있다.
+
+```java:Table.java
+
+
+@Slf4j
+public class Table {
+    String[] dishNames = {"donut", "donut", "burger"}; //donut을 더 자주 추가한다.
+    final int MAX_FOOD = 6; // 테이블에 놓을 수 있는 음식 수.
+    private ArrayList<String> dishes = new ArrayList<>();
+    int eatCount = 0;
+
+    // ReentrantLock을 Chef와 Customer에 대해 생성
+    private ReentrantLock lock = new ReentrantLock();
+    private Condition forChef = lock.newCondition();
+    private List<Condition> forCusts = Arrays.asList(lock.newCondition(),lock.newCondition());
+
+    public void add(String dish){
+        lock.lock(); // 임계 영역 생성
+        try {
+            int waitingCustomers = lock.getQueueLength();
+            log.info("add Number of waiting members: " + waitingCustomers);
+            // 테이블에 음식이 가득찼으며 테이블에 음식을 추가하지 않는다.
+            while (dishes.size() >= MAX_FOOD) {
+                String name = Thread.currentThread().getName();
+                log.info(name + " is waiting.");
+                try {
+                    forChef.await(); //Chef에게 음식이 충분하니 기다리게 (lock 반납하게) 한다.
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {
+                }
+            }
+            dishes.add(dish);
+            if(dish.contains(dishNames[1])){
+                // 도넛을 기다리던 고객1에게 도넛이 있음을 알린다.
+                forCusts.get(0).signal();
+            }else{
+                // 버거를 기다리던 고객2에게 버거가 있음을 알린다.
+                forCusts.get(1).signal();
+            }
+            log.info("Dishes: "+ dishes);
+        } finally {
+            lock.unlock();
+        }
+
+    }
+    public void remove(String dishName){
+        lock.lock();
+        try {
+            String name = Thread.currentThread().getName();
+            int waitingCustomers = lock.getQueueLength();
+            log.info("remove Number of waiting members: " + waitingCustomers);
+            while(!dishes.contains(dishName)){ // 테이블에 고객이 원하는 음식이 없는 경우
+                log.info(name+" is waiting.");
+                try{
+                    if(dishName.equals(dishNames[1])){
+                        // 고객1에게 도넛이 없으니 기다리게 한다.
+                        forCusts.get(0).await();
+                    } else{
+                        // 고객2에게 버거가 없으니 기다리게 한다.`
+                        forCusts.get(1).await();
+                    }
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {}
+            }
+            // 지정된 요리를 테이블에서 제거한다.
+            dishes.remove(dishName);
+            eatCount++;
+            log.info("new eat count is "+eatCount);
+            // 음식 수가 줄었으니 요리사에게 알린다.
+            forChef.signal();
+        } finally {
+            lock.unlock();
+        }
+    }
+    public int dishNumb(){return dishNames.length;}
+}
+```
+
+위는 이전과 달리 요리사가 음식을 만들고 테이블에 고객이 원하는 음식이 있을 때 해당 고객에게 음식을 제공하고,
+테이블에 고객이 원하는 음식이 **없는 경우** 해당 고객을 기다리도록 했다.
+위와 같이 로직을 작성하면 오히려 `eat count`가 25 내외로 더 떨어진다.
+
+## 고객을 기다리게 하지 않았을 때 음식을 먹은 횟수가 낮아지는 이유 분석
+
+음식 종류로 **Condition**을 세분화하면 통지를 받고도 원하는 음식이 없어서 다시 기다리는 일이 없어서 고객이 더 많이 먹을 수 있을 줄 알았는데
+왜 고객이 음식을 먹는 수가 더 떨어졌을까?
+
+이유는 아래처럼 3가지로 생각이 든다.
+
+1. **수정된 코드**가 실제론 고객을 **기다리게**한다.
+2. 고객이 기다리진 않지만, **waiting pool**에서 **lock을 받도록 대기**한다.
+3. **요리사**가 음식을 **만드는 속도**를 **고객**이 음식을 **먹는 속도**가 따라가지 못한다.
+
+### 고객이 기다리는 횟수 찾아보기
+
+log에서 `is waiting.` 의 개수를 찾아보면 이 문제는 쉽게 찾을 수 있다.
+두 코드에서 고객과 요리사가 **평균적으로 wating하는 횟수**는 각각 16회 9회로 두번째 코드의 사람들이 더 적게 lock을 위해 기다리는 것을 알 수 있다.
+음식의 조건에 따라 `await과 signal`을 호출하기 때문에 당연한 결과다.
+하지만 이 결과가 수정 코드의 낮은 성능의 원인으로 볼 수는 없다...
+
+### 쓰레드가 wait pool에서 기다리는 횟수 찾아보기
+
+아래 코드를 추가해서 `add()`와 `remove()`가 실행되는 동안 기다리는 쓰레드가 있는지 확인하고 얼마나 빈번하게 기다리는지 확인한다.
+
+```
+int waitingCustomers = lock.getQueueLength();
+log.info("add Number of waiting members: " + waitingCustomers);
+```
+
+위 코드로 table에 lock을 얻기위해 waitng pool에서 기다리는 쓰레드를 확인한 결과 신기한 점은 `Number of waiting members: 1`이 많이 등장할 수록 `eat count`가 증가한다.
+더 적게 기다리면 더 많이 동작할 수 있다는 기존 생각을 깨는 결과가 나와버렸다.
+
+### 고객의 수를 늘려보기
+
+수정된 코드의 상황은 고객이 lock을 기다리지도 않고, `waiting`하지도 않고 조건에 따라 먹을 수 있지만,
+요리사가 요리를 꾸준히 하지 않고 금방 테이블에 음식이 차버리는 상황이 나온다.
+
+지금 코드는 고객 2명이 요리사가 만든 요리를 먹고 있다. 그렇다면 고객의 수를 4명, 6명일 때 고객이 먹는 횟수가 일정할까?
+고객을 4명으로 늘렸을 때 초기 코드와 수정 코드 각각 30회 32회로 고객을 늘렸더니 요리사의 `waiting`이 줄어들고 다른 고객들의 `waitgin`이 늘고, waiting pool에서 기다리는 쓰레드도 많아졌다.
+결국 위 두 실험과 같이 더 많이 기다리고 더 많이 waiting pool에서 기다리면 더 많이 먹는다는 결과를 뒤집지는 못했다.
+
+## 결론
+
+아직은 이 문제에 대한 답을 찾지 못한 것 같다. 다른 이의 도움이나 더 실력이 쌓이면 다른 로직을 통해서 음식에 따라 condition을 달리해서
+기존 코드 보다 더 많이 고객에게 먹게하는 코드를 작성할 것이다. 꼭!
+
+하지만 이번 Multi-Thread와 동기화 그리고 동기화 문제를 해결하기 위해 **임계영역**이나 lock에 대한 여러 전략과 동시성 제어 프로그래밍을 공부했고,
+이러한 내용은 데이터베이스에서 transaction과 함께 다시 나오는 내용이기 때문에 좋았다.

@@ -13,7 +13,7 @@ summary: 'AWS Elastic Beanstalk'
 
 지금까지는 아래 그림과 같이 3-tier 아키텍처로 앱을 배포했다. 로드밸런서로 요청을 받고, ASG로 요청 처리, 캐시와 DB로 데이터를 저장하는 방식으로 말이다.
 
-<img src="/images/static/aws/aws-3-tire.png" />
+<img src="/static/images/aws/aws-3-tire.png" />
 
 만약 엄청 많은 애플리케이션을 배포해야할 때는 매번 위와 같이 아키텍처를 구축하기 어려울 것이다.
 개발자로서 원하는 것은 단지 코드를 실행시키는 것이다.
@@ -34,7 +34,7 @@ Beanstalk 프로세스는 **Create Application**, **Upload Version**, **Launch E
 
 ### 웹 서버 티어 vs 작업자 티어
 
-<img src="/images/static/aws/aws-beanstalk-web-worker.png" alt="웹 서버 환경과 작업자 환경 차이" />
+<img src="/static/images/aws/aws-beanstalk-web-worker.png" alt="웹 서버 환경과 작업자 환경 차이" />
 
 웹 서버 환경은 일반적으로 WAS를 배포하듯이 ELB에 EC2가 여러 AZ에 걸쳐 있는 것을 말한다.
 작업자 환경은 EC2 인스턴스에 직접 접근하는 클라이언트가 없고 **SQS**라는 메시지 큐를 사용한다.
