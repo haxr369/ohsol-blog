@@ -1,0 +1,204 @@
+---
+title: Transaction에서 Lock 실습
+date: '2023-12-03'
+lastmod: '2023-12-03'
+tags: ['db', 'Transaction', 'lock', 'jpa']
+draft: false
+summary: 'Transaction을 위한 Lock과 사용법'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+이번 포스팅은 [Transaction에서 Lock 개념](/blog/db/db-transaction-lock)을 실습하기 위해 작성한다.
+또한 모든 코드는 [com.solsol.lock](https://github.com/haxr369/lock-concurrent)을 통해 실행시킬 수 있다.
+
+## Non-Repeatable Read 상황 만들기
+
+<img src="/static/images/db/db-transaction-lock-problem1.png" alt="문제 상황 1번" />
+
+위와 같이 사용자가 티켓 확인을 한 transaction에서 두번 수행하는데 중간에 다른 사용자가 티켓 수량을 바꿔버리는 상황이다.ㄴ
+**Read commited** 격리 수준이라면, 사용자가 **두번째** 읽을 때 변경된 티켓을 확인할 것이고,
+**Repeatiable read** 격리 수준이라면, 사용자가 **두번째** 읽을 때 변경되지 않는 티켓을 확인할 것이다.
+
+## Non-Repeatiable Read 실험
+
+```
+public class NonRepeatableRead {
+	private final TicketService ticketService;
+	private final UserService userService;
+	private final EntityManager em;
+	public static void main(String[] args) {
+		SpringApplication.run(NonRepeatableRead.class, args);
+	}
+	@PostConstruct // 빈이 생성되고 자동 실행
+	public void nonRepeatableRead() {
+		// 기본 조건 설정
+		User user = new User("고객1");
+		userService.saveUser(user);
+		Ticket ticketA = new Ticket("A좌석", 5L);
+		ticketService.saveTicket(ticketA);
+
+    // 멀티 쓰레드 환경 생성
+		Runnable ticketRead = new TicketRead(ticketService);
+		Thread read = new Thread(ticketRead);
+		Runnable ticketSubtract = new TicketSubtract(ticketService);
+		Thread subtract = new Thread(ticketSubtract);
+
+		read.start(); // 두번 읽기 시작
+		subtract.start(); // 티켓 수량 바꾸기
+	}
+}
+```
+
+위 코드는 아무런 `@Transactional`을 붙이지 않고 멀티쓰레드를 이용해서 동일한 티켓을 두번 읽는 쓰레드와 티켓 수량을 바꾸는 쓰레드를 생성하고 실행했다.
+티켓을 한번 읽고 1초 기다린 후 다시 읽기 때문에 두번째 쓰레드로 인해 티켓 변경 유무를 확인할 수 있다.
+아래는 그 결과다.
+
+```
+Hibernate: select t1_0.ticket_id,t1_0.quantity,t1_0.status,t1_0.ticket_name
+    from ticket t1_0 where t1_0.ticket_name=?
+Hibernate: select t1_0.ticket_id,t1_0.quantity,t1_0.status,t1_0.ticket_name
+    from ticket t1_0 where t1_0.ticket_name=?
+first read : TicketDto(ticketId=1, ticketName=A좌석, status=OPEN, quantity=5)
+Hibernate: select t1_0.ticket_id,t1_0.quantity,t1_0.status,t1_0.ticket_name
+    from ticket t1_0 where t1_0.ticket_name=?
+second read : TicketDto(ticketId=1, ticketName=A좌석, status=OPEN, quantity=5)
+```
+
+중간의 `update`가 적용되지 않고 사라지는 것을 볼 수 있다. 이는 `@Transactional`을 붙이지 않더라도 실제로는 읽기 transaction 중에는
+배타적으로 다른 transaction의 접근을 막는 것을 알 수 있다. 그리고 아래 MySQL의 공식 문서를 통해 default isolation level은 **REPETABLE READ**이고 위와 같이 `@Transactional` 없이 **Repeatable READ**의 결과가 납득이 간다.
+
+**Transaction Isolation Levels**
+
+> To set the transaction isolation level, use an ISOLATION LEVEL level clause. It is not permitted to specify multiple ISOLATION LEVEL clauses in the same SET TRANSACTION statement.
+
+> The default isolation level is REPEATABLE READ. Other permitted values are READ COMMITTED, READ UNCOMMITTED, and SERIALIZABLE. For information about these isolation levels, see Section 15.7.2.1, “Transaction Isolation Levels”.
+
+## Phantom Read 상황 만들기
+
+<img src="/static/images/db/db-transaction-lock-problem2.png" />
+
+위 상황은 티켓의 상태를 transaction 중간에 바꿔서 데이터의 **범위**를 바꾸는 **Phantom Read** 상황이다.
+MySQL의 기본 ISOLATION level이 **Repeatable Read**라면 이 상황에는 `@Transactional` 없이 코드를 실행시키면 **Phantom Read**가 발생해야한다.
+
+```java:Phantom
+@PostConstruct
+	public void phantomRead(){
+    // 실험 준비
+		Ticket ticketA = new Ticket("A좌석", 5L);
+		Ticket savedTicketA = ticketService.saveTicket(ticketA);
+		ticketService.updateStatus(savedTicketA.getTicketId(), TicketStatus.CLOSE);
+		Ticket ticketB = new Ticket("B좌석", 5L);
+		Ticket savedTicketB = ticketService.saveTicket(ticketB);
+
+    // 쓰레드 생성
+		Runnable readCloseTickets = new ReadCloseTickets(ticketService);
+		Thread read = new Thread(readCloseTickets);
+		Runnable updateTicketStatus = new UpdateTicketStatus(ticketService);
+		Thread update = new Thread(updateTicketStatus);
+
+		read.start();
+		update.start();
+	}
+```
+
+위와 같이 코드를 실행하면 아래처럼 **Phantom Read**가 발생한다.
+
+```
+first query dto count : 1
+    [TicketDto(ticketId=1, ticketName=A좌석, status=CLOSE, quantity=5)]
+Hibernate: select t1_0.ticket_id,t1_0.quantity,t1_0.status,t1_0.ticket_name
+    from ticket t1_0 where t1_0.ticket_id=?
+update ticket id : 2
+Hibernate: update ticket set quantity=?,status=?,ticket_name=? where ticket_id=?
+Hibernate: select t1_0.ticket_id,t1_0.quantity,t1_0.status,t1_0.ticket_name
+    from ticket t1_0 where t1_0.status=?
+second query dto count : 2
+    [TicketDto(ticketId=1, ticketName=A좌석, status=CLOSE, quantity=5),
+    TicketDto(ticketId=2, ticketName=B좌석, status=CLOSE, quantity=5)]
+```
+
+당연히 아무런 `@Transactional`을 붙이지 않았기 때문에 MySql의 기본 ISOLATION level인 Repeatable read를 적용해서 Phantom read가 발생한다.
+이를 해결하기 위해선 읽기 작업인 `read` 쓰레드의 `run` 부분에 `@Component`와 `@Transactional(isolation = Isolation.SERIALIZABLE)`을 추가하여
+Spring이 빈으로 관리할 수 있게하면서 Transaction을 관리할 수 있게한다.
+
+## SERIALIZABLE 성공
+
+```java:ReadCloseTickets.java
+@RequiredArgsConstructor
+@Slf4j
+@Component
+public class ReadCloseTickets implements Runnable{
+    private final TicketService ticketService;
+    @Override
+    @Transactional(isolation = Isolation.SERIALIZABLE)
+    public void run() {
+        List<TicketDto> ticketDtoListFirst = ticketService.findByTicketStatus(TicketStatus.CLOSE);
+        log.info("first query dto count : "+ticketDtoListFirst.size()+" "+ticketDtoListFirst);
+        try{
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);}
+        List<TicketDto> ticketDtoListSecond = ticketService.findByTicketStatus(TicketStatus.CLOSE);
+        log.info("second query dto count : "+ticketDtoListSecond.size()+" "+ticketDtoListSecond);
+    }
+}
+```
+
+```java:phantomRead
+@SpringBootApplication
+@Slf4j
+@RequiredArgsConstructor
+public class NonRepeatableRead {
+
+	private final TicketService ticketService;
+	private final ReadCloseTickets readCloseTickets;
+	private final UpdateTicketStatus updateTicketStatus;
+
+	public static void main(String[] args) {
+		SpringApplication.run(NonRepeatableRead.class, args);
+	}
+	@PostConstruct
+	public void phantomRead(){
+		Ticket ticketA = new Ticket("A좌석", 5L);
+		Ticket savedTicketA = ticketService.saveTicket(ticketA);
+		ticketService.updateStatus(savedTicketA.getTicketId(), TicketStatus.CLOSE);
+		Ticket ticketB = new Ticket("B좌석", 5L);
+		Ticket savedTicketB = ticketService.saveTicket(ticketB);
+
+		Thread read = new Thread(readCloseTickets);
+		Thread update = new Thread(updateTicketStatus);
+
+		read.start();
+		update.start();
+
+	}
+}
+```
+
+위와 같이 Spring Bean으로 관리하는 클래스에 `Transaction` 어노테이션을 붙이면 원하는 격리수준의 Transaction이 가능하게된다!!
+아래는 코드 실행결과다.
+
+```
+first query dto count : 1
+    [TicketDto(ticketId=1, ticketName=A좌석, status=CLOSE, quantity=5)]
+Hibernate: select t1_0.ticket_id,t1_0.quantity,t1_0.status,t1_0.ticket_name
+    from ticket t1_0 where t1_0.ticket_name=?
+Hibernate: select t1_0.ticket_id,t1_0.quantity,t1_0.status,t1_0.ticket_name
+    from ticket t1_0 where t1_0.ticket_id=?
+update ticket id : 2
+Hibernate: update ticket set quantity=?,status=?,ticket_name=? where ticket_id=?
+Hibernate: select t1_0.ticket_id,t1_0.quantity,t1_0.status,t1_0.ticket_name
+    from ticket t1_0 where t1_0.status=?
+second query dto count : 1
+    [TicketDto(ticketId=1, ticketName=A좌석, status=CLOSE, quantity=5)]
+```
+
+이전 결과와 달리 **Phantom Read**가 사라지는 것을 볼 수 있었다.!!!!!!!
+
+이번에는 Spring에서 지원하는 동시성 제어 방법인 `@Transactional`에 대해 그리고 멀티 쓰레드 환경의 동시성 제어 방법에 대해 실습해봤다.
+하지만, 이번에는 transaction의 **충돌이 발생했을 때** 요청을 **어떻게 예외처리**하고 다시 transaction을 실행할지 같은 전략은 실습하지 못했다.
+
+다음번에는 낙관적 lock과 비관적 lock에 대해 학습하고 transaction 충돌 상황과 예외처리까지 해볼 계획이다.
