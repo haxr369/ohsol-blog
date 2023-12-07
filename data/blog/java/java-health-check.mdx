@@ -1,0 +1,146 @@
+---
+title: Java에서 HTTP 연결을 이용한 헬스체크
+date: 2023-12-07
+lastmod: 2023-12-07
+tags: ['java', 'http', 'URLConnection', 'socket']
+draft: false
+summary: 'Java에서 다른 서버의 연결과 헬스체크를 수행하는 여러 방법'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+지금까지 단순히 Spring 써서 서버만 만들었지 서버가 클라이언트가 되어 다른 서버에 Http 요청을 보낼 일은 없었다.
+하지만, SOC 프로젝트를 진행하던 중 고객사 **보안 장비**의 **상태를 확인**하는 기능을 만들 필요가 있었다.
+이를 위해 Java에서 지원하는 여러 **헬스체크** 방법을 찾아보고 각 기술의 장단점을 적어볼 것이다.
+
+## 개요
+
+이미 [StackoverFlow](https://stackoverflow.com/questions/3584210/preferred-java-way-to-ping-an-http-url-for-availability),
+[StackoverFlow](https://stackoverflow.com/questions/11506321/how-to-ping-an-ip-address)에 이와 관련된 질문이 있었다.
+질문 내용은 "Health-check할 **URL**을 알고 **Java**를 이용할 때 **어떤** 방식을 사용해야하는가" 이다.
+답변 내용을 종합하면 3가지 방법을 소개한다.
+
+- **InetAddress**
+- **java.net.socket**
+- **URLConnection**
+
+## InetAddress
+
+**PING**이란 **P**acket **I**nter**N**et **G**roper의 준말로 보통 네트워크 상에서 특정 ip 주소에 접근이 **가능한지**를 확인하기 위해 사용한다.
+ping은 **round-trip time**(RTT, 송신부터 수신까지 패킷이 왕복한느 시간)을 측정한다.
+
+ping은 ICMP/ICMP6 프로토콜을 사용하여 타겟 host에 ICMP Request packet를 보내고 Reply를 기다린다.
+ICMP 프로토콜은 라우터 같은 **네트워크 장비**에 **에러** 정보나 **장비의 운영** 정보를 확인하는데 사용된다.
+ICMP는 TCP,UDP와 같은 다른 transport 프로토콜과는 다르게 TCP, UDP는 시스템 사이 데이터 **교환**을 위해 사용된다.
+
+### InetAddress 사용법
+
+아래 코드와 같이 `InetAddress`를 생성하고 `isReachable` 메서드를 이용해서 해당 ip가 ICMP 프로토콜로 통신이 가능한지 확인할 수 있다.
+
+```java:PingExample.java
+@Slf4j
+public class PingExample {
+    public static void main(String[] args){
+
+        List<String> checkingIPs = Arrays.asList("127.0.0.1", "10.77.77.255");
+
+        checkingIPs.forEach(
+                ip -> {
+                    if(sendPingRequest(ip)) log.info(ip+" is reachable!");
+                    else log.info(ip+" is not reachable...");
+                }
+        );
+    }
+
+    public static boolean sendPingRequest(String ipAddress){
+        try{
+            InetAddress address = InetAddress.getByName(ipAddress);
+            return address.isReachable(1000);
+        } catch (Exception e){
+            e.printStackTrace();
+            return false;
+        }
+    }
+}
+```
+
+위와 같은 코드를 실행하면 ICMP를 사용하여 **raw socket**이 필요하게된다.
+하지만 보통 OS는 사용자가 raw socket을 직접 조작하는 것을 막기 때문에 아래와 같은 `Permission denied (connect failed)`가 발생한다.
+
+```
+PingExample -- 127.0.0.1 is reachable!
+PingExample -- 10.77.77.255 is not reachable...
+java.net.ConnectException: Permission denied (connect failed)
+	at java.base/java.net.Inet6AddressImpl.isReachable0(Native Method)
+	at java.base/java.net.Inet6AddressImpl.isReachable(Inet6AddressImpl.java:98)
+```
+
+그렇기 때문에 java에서 다른 서버의 상태를 **확인**하기 위해 ping을 사용할 순 없고, TCP/IP 포트를 사용하는 **socket**을 사용할 수 있다.
+**socket**은 호스트 머신에 메시지를 보내기위해 사용할 수 있어서 **ping** 대신 java에서 사용할 수 있다.
+
+## Socket
+
+**소캣**은 서로 다른 두 프로세스 사이에 연결을 담당하는 **엔드 포인트**이다.
+소캣은 프로세스의 **포트**에 바인딩되며 서버는 소캣을 통해 클라이언트의 연결 요청을 기다리는 상태로 **대기**한다.
+클라이언트가 소캣에 연결 요청을 하면 서버는 이를 수락하고 해당 **소캣 및 포트**를 통해 통신을 수립한다.
+
+서버-클라이언트 연결이 완성되면, 서버는 새로운 소캣을 생성하고 기존 포트와 동일한 포트에 바인딩시킨다.
+그리고 소캣에 메세지를 쓰고 읽으면서 통신한다.
+
+위에서 endpoint는 IP 주소와 포트 번호의 조합이다. 그리고 각 TCP 연결은 두 endpoint로 식별된다. 따라서 호스트와 서버 간에 여러 연결을 생성할 수 있다.
+Java에서 **Socket** 클래스는 Java 프로그램과 네트워크 상의 다른 프로그램 간의 양방향 연결을 구현한다. Java 프로그램은 서버일 수도 있고, 클라이언트가 될 수 있다.
+
+다만, 소캣은 HTTP(S) 연결의 하부 구현이기 때문에 HTTP 연결을 하려면 URL 클래스 및 관련 클래스 (URLConnection)를 사용하는 것이 소켓 클래스 보다 적합하다.
+이번에는 웹 연결과 달리 다른 보안 장비의 **상태 체크**가 목적이기 때문에 **Socket**을 사용해도 괜찮을 것 같다.
+
+## URLConnection
+
+**HttpURLConnection**은 **URLConnection**이라는 추상 클래스를 확장한 클래스로 Socket을 하부 구현으로 사용하며 Java 프로그램과 URL 사이의 HTTP 연결을 담당한다.
+**URLConnection**은 ip와 포트 번호로 상대 서버에 연결하는 라이브러리로 Socket을 하부 구현으로 사용하고 있지만, Socket을 사용할 경우 사용자가 직접 소캣 **연결 작업**을 담당해야한다.
+그렇기 때문에 이를 한번 추상화시킨 URLConnection을 사용하는게 좋아보인다. 마치 DB 연결을 위해 JDBC를 사용할 수 있지만, 더 쉽고 편하게 개발하기 위해 JPA, Spring Data JPA를 사용하는 것과 같다.
+
+### URLConnection 사용법
+
+URLConnection은 HTTP 중심적인 클래스기 때문에 많은 메서드가 오직 HTTP URLs를 위해 작업하는데 유용하게 사용할 수 있다.
+하지만, 대부분의 URL 프로토콜은 연결에서 데이터를 읽고 쓸 수 있게 해주기 때문에 URLConnection을 통해 다양한 URL 프로토콜에서도 사용할 수 있다.
+
+아래 코드와 같이 `URLConnection`에서 `URL`을 생성하고 이 URL에 `openConnection`을 열어서 서버와 클라이언트 사이를 **연결**한다.
+또한 서버가 클라이언트로 입력 메세지를 보내면 `BufferReader`로 메세지를 받아서 출력하게된다.
+
+```java:URLConnectionReader.java
+public class URLConnectionReader {
+    public static void main(String[] args) throws Exception {
+        URL oracle = new URL("http://www.naver.com/");
+        URLConnection yc = oracle.openConnection();
+        BufferedReader in = new BufferedReader(new InputStreamReader(
+                yc.getInputStream()));
+        String inputLine;
+        while ((inputLine = in.readLine()) != null)
+            System.out.println(inputLine);
+        in.close();
+    }
+}
+```
+
+위 코드를 실행하게되면 아래와 같이 HTTP 연결 통해 naver.com 서버에서 작성한 내용을 한줄한줄 읽을 수 있다.
+
+```
+<html>
+<head><title>302 Found</title></head>
+<body>
+<center><h1>302 Found</h1></center>
+<hr><center> NWS </center>
+</body>
+</html>
+```
+
+## Socket을 사용하는 이유
+
+이번 프로젝트는 **Java**를 활용하여 다른 **머신**의 **Health Check**만 하면된다.
+java를 쓰기 때문에 ICMP 통신인 **InetAddress**는 사용하지 못할 것 같고,
+HTTP 연결을 지원하는 클래스인 URLConnection는 다른 서버와 메세지를 주고 받는데 특화되어 있다.
+그렇기 때문에 단지 **Health Check**만 해도 괜찮은 상황에서 **오버스팩**인 것 같다.
+
+위 내용을 종합하면 **Socket**을 사용해서 **Sping 서버**가 다른 **보안 장비**의 Health Check하고 결과를 저장하는 기능을 작성할 것이다.

@@ -1,0 +1,67 @@
+---
+title: AWS CloudFormation
+date: 2023-12-06
+lastmod: 2023-12-06
+tags: ['AWS', 'cloudfromation', 'DVA-C02']
+draft: false
+summary: 'AWS CloudFormation을 이용한 코드 인프라 구축'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## CloudFormation 업로드 원리
+
+AWS 콘솔에서 CloudFormation 코드를 실행시키려고 **업로드**하면 백그라운드에서 S3에 저장되고 이를 CloudFormation에서 S3에대한 참조를 사용한다.
+
+## Pseudo Parameters
+
+1. AWS::AccountId
+2. AWS::NotificationARNs
+3. AWS::NoValue
+4. AWS::Region
+5. AWS::StackId
+6. AWS::StackName
+
+## CloudFormation 함수
+
+시험에 무조건 나오는 함수는 아래와 같다.
+
+- **!Ref** : 매개변수를 참조할 때 사용. Parameters, Resources(EC2 ID 같은 리소스의 물리적 ID)
+- **Fn::GetAtt** : Ref는 리소스의 ID만 얻지만, GetAtt를 사용하여 리소스의 **속성**(AZ, PublicIP, ...)을 얻는다.
+- **Fn::FindInMap** : "ex) !FindInMap [RegionMap, !Ref "AWS:Region", 32]"
+- **Fn::ImportValue** : 다른 CloudFormation 템플릿에서 출력한 인프라 id를 참조해서 사용
+- **!Join** : delimiter와 구분자의 리스트를 넣으면 문자열을 만들어준다. ex) !Join [":", [a, b, b]] == "a:b:c"
+- **!Sub** : substitute 문자열에서 어떤 부분을 대체할 때 사용한다.
+- **Condition Functions** : (Fn::If, Not, Equals, ...)
+
+## CloudFormation 롤백
+
+스택을 생성하지 못하면 모두 삭제되고 롤백된다.
+업데이트가 실패하면 이전에 성공한 스택으로 롤백하고
+처음 생성할 때는 전부 다 지우거나 롤백을 하지 않도록해서 문제를 해결할 수 있도록 할 수 있다.
+
+처음 스택을 생성할 때 실패했다면 조금 만들어진 리소스들을 **삭제**하고 새로운 스택을 작성해서 생성해야한다.
+
+## Cross, Nested Stacks 그리고 StackSets
+
+1. Cross Stacks
+
+스택이 다른 라이프 사이클을 가질 때 사용한다.
+`ImportValue`를 이용해서 한 스택의 Output을 다른 스택이 사용할 때 유용하다
+VPC ID 같이 다른 스택에게 export value를 제공할 때 사용한다.
+
+2. Nested Stacks
+
+한번 사용된 컴포넌트를 **재사용**할 때 사용한다. 2. nested stack은 동일 레벨의 스택 간 공유되지 않기 때문에 오직 더 높은 레벨의 스택에 영향을 끼친다.
+
+Cross Stacks는 동일 레벨 다른 스택에게 export value를 제공하지만, Nested Stacks는 동일 레벨에 공유되지 않고 더 높은 레벨, 즉 ELB, ASG, RDS 가 합쳐서 Application Stack을 이루고
+이 App Stack을 재사용해서 새로운 인프라를 만들 수 있다.
+
+3. StackSets
+
+한 조직에서 **여러 계정과 리전**에 걸쳐서 스택을 생성, 업데이트 또는 삭제하는데 stack을 사용할 수 있게한다.
+
+관리자 계정이 StackSets를 생성하면 신뢰하는 계정들이 스택 인스턴스를 StackSets로 CRUD할 수 있다.
+만약 StackSets을 업데이트하면 모든 리전과 계정에 대한 스택 인스턴스 또한 업데이트된다.
