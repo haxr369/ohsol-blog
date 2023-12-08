@@ -1,0 +1,89 @@
+---
+title: Transaction에서 MVCC
+date: '2023-12-07'
+lastmod: '2023-12-07'
+tags: ['db', 'Transaction', 'lock', 'MVCC', 'concurrent-programming', 'jpa']
+draft: false
+summary: '많은 RDBMS에서 transaction 격리를 위해 사용하는 MVCC에 대해 알아보자'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+이번 포스팅은 transaction Lock을 보안하기 위한 2 phase locking 프로토콜에대해 정리한다.
+쓰레드의 동시성 문제를 해결하기 위해 [ReentrantLock](/blog/java/java-thread2#lock과-condition을-이용한-동기화)을 사용한 것처럼
+DB도 transaction 간의 데이터 접근을 막기 위해서 **lock**을 사용한다.
+
+## DB에서 lock이란
+
+DB에서 lock이란 [쓰레드의 lock](/blog/java/java-thread1#쓰레드와-동기화)처럼 한 transaction이 한 데이터의 read나 write lock을 가지고 있다면,
+그 데이터가 unlock될 때까지 다른 transaction이 read, write 작업을 하지 못하는 것을 의미한다.
+
+transaction 간의 데이터 접근을 **제한**하지만, lock만으로는 완전한 **SERIALIZABLE** 격리 상태를 만들 수 없다.
+SERIALIZABLE 격리 상태는 같은 데이터를 사용하는 두 transaction은 무조건 순차적으로 데이터를 업데이트해야하기 때문이고,
+lock은 데이터를 막지만, unlock되면 끝이기 때문에 순서를 **제한**할 수 없다.
+
+## MVCC란
+
+기존 lock을 이용한 **concurrency control**은 **read-read**인 경우를 제외하고 다른 모든 경우에 데이터 접근을 막기 때문에 **정합성**을 위해 DB 성능이 좋지 못했다.
+
+데이터 정합성을 보장하면서 성능을 높이기 위해, **read--write**도 가능하도록 **multiversion concurrency control**이 개발되었다.
+
+**MVCC**는 읽기와 쓰기가 동시에 수행되는 것을 허가하기 위해 **commit된 데이터**만 읽는다.
+아래 이미지 상황에서 두번째 읽기 결과는 **Isolation level**에 따라 달라진다.
+
+<img src="/static/images/db/db-transaction-lock-problem1.png" alt="isolation 문제" />
+
+- **Read Committed** : 읽을 당시 commit된 값을 읽기 때문에 티켓 수량이 **감소되어** 읽어진다.
+- **Repeatable Read** : transaction이 시작될 때의 상태 값을 읽어야하기 때문에 수량이 **감소되지 않고** 읽어진다. PostgreSQL은 같은 데이터에 먼저 update한 transaction이 commit되면 나중 tx는 rollback되며 **lost update**를 해결한다. 이런 특징을 **first-updater-win**이라고 한다. 하지만 MySQL의 MVCC는 lost update를 Repeatable Read만으로 해결할 수 없다.
+- **Serializable** : **MySQL**은 MVCC 보다는 lock으로 동작한다. PostgreSQL은 SSI(Serializable Snapshot Isolation) 기법이 적용된 **MVCC**로 동작한다.
+
+### MVCC 특징
+
+- 데이터를 **읽을 시점** 기준으로 **가장 최근**에 **commit**된 데이터를 읽는다.
+- 데이터 변화 이력을 관리한다. (데이터 변화 이력을 저장하기 위해 추가 저장 공간을 사용한다.)
+- read와 write가 서로 block하지 않기 때문에 성능적으로 더 향상된다.
+
+Repeatable Read 격리 수준에서 MySQL과 PostgreSQL 모두 **MVCC**를 구현한다.
+PostgreSQL은 **first-updater-win** 특징으로 MVCC만으로 **lost update** 문제를 해결할 수 있다.
+하지만, MySQL은 일반적인 방법으로는 **lost update** 문제를 해결하지 못한다.
+
+MySQL이 lost update를 해결하는 방법은 `Locking read`를 이용한다.
+locking read의 특징은 transaction의 격리 수준과 상관 없이 **가장 최근의 commit**된 데이터를 읽는 것이다.
+
+```
+// 기본 쿼리
+SELECT balance FROM account WHERE id='x';
+// write lock, 배타적 락을 획득한다.
+SELECT balance FROM account WHERE id='x' FOR UPDATE;
+// read lock, 공유 락을 획득한다.
+SELECT balance FROM account WHERE id='x' FOR SHARE;
+```
+
+위 두 쿼리의 차이점은 마지막에 `FOR UPDATE`의 유무이다. 개발자가 조회 쿼리를 보낼 때 명시적으로 `FOR UPDATE`를 작성하면
+데이터 읽기를 할 때도 **write lock**을 취득할 수 있다.
+이 방법은 MVCC의 목표인 **read-write** 동시를 할 수 없지만, PostgreSQL처럼 rollback하진 않는 장점이 있다.
+
+## Repeatable Read에서 발생하는 문제
+
+<img src="/static/images/db/db-write-skew.png" alt="write skew 예시" />
+
+위 그림은 정상적으로 transaction이 진행됐다면 x=30, y=20 이거나 x=20, y=30이어야한다.
+그러나 위 그림을 볼 때 **Repeatable Read** 격리 수준에서 x=20, y=20인 결과가 나와버렸다.
+이렇게 서로 다른 값을 업데이트할 때 결과가 달라지는 상황을 **Write Skew**라고 한다.
+이런 문제는 MySQL, PostgreSQL 모두 발생할 수 있다.
+
+MySQL은 쿼리할 때 개발자가 `Locking Read`를 명시하면 읽기와 동시에 쓰기 lock도 쥐기 때문에 다른 transaction이 읽기, 쓰기를 할 수 없게된다.
+정리하면, MySQL에서 Repeatable Read 수준에서 `Locking Read`를 사용하면 Write Skew 문제를 해결할 수 있다.
+
+PostgreSQL은 `Locking Read`를 적용하면 **first-updater-win** 규칙이 적용되어
+먼저 시작한 transaction만 잘 적용되고 나중 시작 transaction은 읽기 조차 막히고 먼저 시작된 transaction이 commit되서야 읽기를 시작할 수 있다.
+
+## Serializable 구현 방식
+
+- **MySQL** : Repeatable Read와 유사하게 구현됐지만, 내부적으로 `SELECT`문을 `SELECT ... FOR SHARE`처럼 동작한다.
+  그렇기 때문에 MySQL에서 SERIALIZABLE은 MVCC 보다는 lock으로 동작하는 SS2PL로 동작한다.
+  `FOR SHARE`를 쓰면 읽기와 쓰기를 동시에 할 수 있어서 좋지만, 데드락이 발생할 수 있는 문제가 있다.
+
+- **PostgreSQL** : MVCC이면서 모든 이상 현상을 막는 SSI로 구현됐다. **first-updater-win**을 이용한다.
