@@ -1,0 +1,107 @@
+---
+title: Transaction의 propagation
+date: '2023-12-12'
+lastmod: '2023-12-12'
+tags: ['db', 'Transaction', 'propagation', 'concurrent-programming', 'jpa']
+draft: false
+summary: 'Transaction의 propagation에 대해 알아보자'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+아래 그림처럼 메서드 안에 메서드, 안에 메서드, 안에 메서드 ...인 상황에서 **Transaction**은 어디까지 유지될까?
+
+<img
+  src="/static/images/db/db-transaction-propagation-problem.png"
+  alt="메서드 간 transaction 전파"
+/>
+
+**전파 속성**은 비즈니스 로직의 transaction **바운더리**를 정의한다.
+Spring은 transaction의 **시작과 중지**를 `propagation setting`에 따라 관리한다.
+**Spring Data JPA**의 **Transactional** 어노테이션의 `propagation` 설정을 통해 전파 속성을 정할 수 있다.
+
+## REQUIRED Propagation
+
+`REQUIRED` 속성은 기본 속성이다. Spring은 현재 실행 중인 transaction이 있는지 체크하고, 존재하지 않는다면 새롭게 생성한다.
+
+```java
+@Transactional(propagation = Propagation.REQUIRED)
+public void requiredExample(String user) {
+    // ...
+}
+```
+
+아래 그림을 참고하면 transaction이 존재하지 않을 때는 새롭게 **생성**하고 기존 transaction이 있을 때는 **이어서 사용**하는 것을 볼 수 있다.
+
+<img
+  src="/static/images/db/db-transaction-propagation-required.png"
+  alt="transaction 전파 required 속성"
+/>
+
+## SUPPORTS Propagation
+
+`SUPPORTS` 속성은 Spring이 먼저 transaction이 존재하는지 확인하고 존재하는 transaction이 있으면 사용한다.
+만약 존재하지 않는다면 **non-transactional**으로 동작한다.
+
+```java
+@Transactional(propagation = Propagation.SUPPORTS)
+public void supportsExample(String user) {
+    // ...
+}
+```
+
+<img
+  src="/static/images/db/db-transaction-propagation-supports.png"
+  alt="transaction 전파 supports 속성"
+/>
+
+## MANDATORY Propagation
+
+`MANDATORY` 속성은 Spring이 먼저 transaction이 존재하는지 확인하고 존재하는 transaction이 있으면 사용한다.
+만약 transaction이 존재하지 않는다면 `IllegalTransactionStateException` exception을 던진다.
+
+<img
+  src="/static/images/db/db-transaction-propagation-mandatory.png"
+  alt="transaction 전파 mandatory 속성"
+/>
+
+## NEVER Propagation
+
+`NEVER` 속성은 Spring이 먼저 transaction이 존재하는지 확인하고 존재하는 transaction이 있으면 `IllegalTransactionStateException` exception을 던진다.
+
+<img
+  src="/static/images/db/db-transaction-propagation-never.png"
+  alt="transaction 전파 never 속성"
+/>
+
+## NOT_SUPPORTED Propagation
+
+`NOT_SUPPORTED` 속성은 메서드를 transaction 밖에서 실행시키는 것이 목표이다.
+따라서 Spring이 transaction이 존재하는지 확인하고 존재하는 transaction이 있으면 그 transaction을 보류시켜서
+비즈니스 로직을 **transaction 없이** 실행시킨다.
+
+<img
+  src="/static/images/db/db-transaction-propagation-not-supported.png"
+  alt="transaction 전파 not supported 속성"
+/>
+
+## REQUIRED_NEW Propagation
+
+`REQUIRED_NEW` 속성은 메서드를 항상 새로운 transaction에서 실행시키는 것이 목표이다.
+따라서 Spring이 transaction이 존재하는지 확인하고 존재하는 transaction이 있으면 그 transaction을 보류시키고
+새로운 transaction을 생성시켜서 그 안에서 메서드를 실행한다.
+
+<img
+  src="/static/images/db/db-transaction-propagation-requireds-new.png"
+  alt="transaction 전파 requireds-new 속성"
+/>
+
+## NESTED Propagation
+
+`NESTED` 속성일 때, transaction이 존재하면 Spring이 **save point**를 지정한다.
+비즈니스 로직을 진행하다가 **exception**이 발생했을 때 transaction을 지정한 save point로 **rollback**한다.
+
+만약 transaction이 존재하지 않는다면 `REQUIRED` 같이 동작한다.
+그리고 **JpaTransactionManager**는 `NESTED`를 JDBC 연결에 대해서만 지원한다.
