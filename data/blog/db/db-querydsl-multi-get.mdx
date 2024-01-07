@@ -1,0 +1,208 @@
+---
+title: 'QueryDSL Illegal pop() 해결 방법 with Stream'
+date: '2023-12-30'
+lastmod: '2023-01-07'
+tags: ['db', 'java', 'QueryDSL', 'fetch', 'stream']
+draft: false
+summary: 'Illegal pop() with non-matching JdbcValuesSourceProcessingState 해결 방법'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 문제 상황 정리
+
+SOC 포털 개발 프로젝트 도중 **대시보드** 화면을 개발하면서 4가지의 api를 한번에 요청하도록 했다.
+하지만, 백엔드 개발자들이 **swagger**로 테스트해서 **정상적**으로 **동작**하는 api들이 프론트에서 요청했을 때 아래 그림처럼 에러가 발생했다.
+
+<img
+  src="/static/images/db/db-multi-api-problem.png"
+  alt="다중 api를 동시에 요청할 경우 발생하는 문제 상황"
+/>
+
+문제가 발생하는 **api**를 **따로따로** 요청했을 때 정상적으로 응답이 왔지만, 위 그림처럼 한번에 요청할 경우 api 정상적인 응답을 보내지 않았다.
+그래서 백엔드의 **로그**를 확인한 결과 아래와 같은 **예외**가 발생했다.
+
+```java:문제가되는코드.java
+// searchDetected 뿐만 아니라 여러 QueryDSL 메서드에서 예외가 발생했다.
+    @Override
+    @Transactional
+    public List<QTicketDto> searchDetected(
+            List<Long> userCompanyIds,
+            String companyCode,
+            LocalDateTime dStartDate,
+            LocalDateTime dEndDate
+    ){
+        log.info(
+                "Searching tickets with parameters - userCompanyIds: {}, companyCode: {}, dStartDate: {}, dEndDate: {}",
+                userCompanyIds, companyCode, dStartDate, dEndDate);
+
+        if (userCompanyIds == null || userCompanyIds.isEmpty()) {
+            log.warn("UserCompanyIds are empty, returning empty page.");
+            return Collections.emptyList();
+        }
+
+        BooleanBuilder cond = new BooleanBuilder();
+        cond.and(userCompanyIdsContain(userCompanyIds))
+                .and(companyCodeEq(companyCode))
+                .and(isDetectedWithinDateRange(dStartDate, dEndDate));
+        List<QTicketDto> content = createTicketDtoQuery()
+                .where(cond)
+                .orderBy(ticket.created.desc())
+                .fetch();
+
+        log.info("Found {} tickets matching the search criteria.", content.size());
+        return content;
+    }
+```
+
+```
+org.springframework.dao.InvalidDataAccessApiUsageException:
+Illegal pop() with non-matching JdbcValuesSourceProcessingState
+```
+
+디버깅을 돌렸을 때 예외는 **fetch()**를 지날 때 문제가 발생했었다. api를 **따로따로** 요청했을 때는 **정상**적으로 쿼리되지만,
+**한번에** 요청하면 **fetch**에서 **예외**가 발생하는 것은 처음 보는 예외였다.
+
+## 문제 원인
+
+[Stackoverflow 관련 질문]("https://stackoverflow.com/questions/75345248/hibernate-6-error-invaliddataaccessapiusageexception-illegal-pop-with-non-mat")과
+SOC **팀장님**이 찝어준 부분을 정리하면 아래와 같다.
+
+1. 한 **Session**에서 여러 **transaction**이 동시에 쿼리를 날리기 때문
+2. db 드라이버 설정 이슈 (1) **QueryTimeout**
+3. db 드라이버 설정 이슈 (2) **max_statement_time**
+
+## 해결 방법
+
+### Thread sleep을 이용한 임시 방편
+
+[원인 1번](/blog/db/db-querydsl-multi-get#문제-원인)에 따라 **동시**에 쿼리하는 것을 나눠서 쿼리하도록 수정했었다.
+
+```java:sleepAdd.java
+    @Override
+    @Transactional
+    public List<QTicketDto> searchDetected(
+            List<Long> userCompanyIds,
+            String companyCode,
+            LocalDateTime dStartDate,
+            LocalDateTime dEndDate
+    ){
+        //... 생략 ...
+
+        BooleanBuilder cond = new BooleanBuilder();
+        cond.and(userCompanyIdsContain(userCompanyIds))
+                .and(companyCodeEq(companyCode))
+                .and(isDetectedWithinDateRange(dStartDate, dEndDate));
+
+        Thread.sleep(500); // fetch 전에 쓰레드를 잠시 멈춰버린다.
+
+        List<QTicketDto> content = createTicketDtoQuery()
+                .where(cond)
+                .orderBy(ticket.created.desc())
+                .fetch();
+
+        //... 생략 ...
+    }
+```
+
+위 코드처럼 **fetch** 전에 **Thread.sleep()**을 통해 각 thread의 fetch 타이밍을 다르게 해서 **동시**에 요청하지 않도록 했다.
+해당 방법으로 로컬에서 테스트할 때는 잘 돌아가서 기뻐했지만, 근본적인 해결책이 아니라서 다른 방법을 찾았다.
+
+### hibernate querytimeout 설정
+
+팀장님의 의심(?)되는 원인으로 QueryTimeout 일 수 있다고 해서 관련 내용을 찾아봤다.
+
+**Hibernate**는 **sql query**의 시간 제한을 설정을 설정할 수 있다. 시간 제한을 넘겨도 쿼리의 응답이 오지 않는다면 예외가 발생하는 것이다.
+아래와 같이 설정을 할 수 있다.
+
+```
+spring.transaction.default-timeout=20s
+//spring.jpa.properties.javax.persistence.query.timeout=5000 이 설정은 deprecated
+```
+
+위와 같이 설정을 `application.properties`에 추가하고 실행했더니 똑같은 에러가 발생해서 QueryTimeout은 원인이 아니라고 판단했다.
+당연할 수 있는게 테스트에 사용되는 데이터 수도 적고, `문제가되는코드`가 그리 복잡하지 않기 때문에 시간이 많이 걸릴 일이 없다.
+
+### max_statement_time
+
+**mariadb**의 `max_statement_time` 설정은 위 `querytimeout`과 비슷한 맥락으로 mariadb가 쿼리를 실행시킬 수 있는 최대 시간이다.
+
+```
+GRANT USAGE ON *.* TO dbuser@'%' WITH MAX_STATEMENT_TIME 60
+```
+
+위 설정으로 **mariadb**의 쿼리 시간 제한을 늘렸지만, 동일한 예외가 여전히 발생했다.
+결과적으로 [hibernate querytimeout 설정](/blog/db/db-querydsl-multi-get#hibernate-querytimeout-설정)과 동일한 분석이였고, 동일하게 문제의 원인이 아니었다.
+
+### 뜻 밖의 해결? db stream 쿼리
+
+여러 원인을 고민하고 적용해도 해결하지 못하자 낙담하던 도중 팀장님께서 요상한 방법으로 해결해주셨다.
+바로 QueryDSL에서 `fetch()` 대신 `stream()`을 시용하는 것이었다.
+
+QueryDSL은 `fetch()`로 Statement를 db에 요청하고 결과를 list로 반환한다고 알고 있다. 그러나 [문제 상황 정리](/blog/db/db-querydsl-multi-get#문제-상황-정리)에서는 이 `fetch()`에서 예외가 발생하는 것 아닌가...
+`fetch()` 대신 `stream()`을 아래처럼 적용했더니 예외가 발생하지 않았다.
+
+```java:streamList.java
+    @Override
+    @Transactional
+    public List<QTicketDto> searchDetected(
+            List<Long> userCompanyIds,
+            String companyCode,
+            LocalDateTime dStartDate,
+            LocalDateTime dEndDate
+    ){
+        //... 생략 ...
+
+        BooleanBuilder cond = new BooleanBuilder();
+        cond.and(userCompanyIdsContain(userCompanyIds))
+                .and(companyCodeEq(companyCode))
+                .and(isDetectedWithinDateRange(dStartDate, dEndDate));
+
+        Thread.sleep(500); // fetch 전에 쓰레드를 잠시 멈춰버린다.
+
+        List<QTicketDto> content = createTicketDtoQuery()
+                .where(cond)
+                .orderBy(ticket.created.desc())
+                .stream().toList()
+                // .fetch();
+
+        //... 생략 ...
+    }
+```
+
+그럼 어떻게 `stream()`은 문제를 해결할 수 있었을까?
+
+## QueryDSL, fetch와 stream 차이
+
+### java8의 stream
+
+Java에서 stream은 다른 자료구조와 달리 데이터를 저장하고 있지 않다. 따라서 point할 수 없고, 해당 **데이터** 위에 동작하는 **함수**만 수행할 수 있다.
+stream은 데이터가 흐르는 파이프라인과 데이터에 대해 작동하는 함수(filter, map, reduce, collect)를 나타낸다.
+java stream에 대해선 [Java stream으로 DB 쿼리 수 줄이기]를 참고하면 사용법을 알 수 있다.
+
+### QueryDSL에서 Stream 자료형 출력
+
+```
+    @Override
+    @Transactional
+    public List<QTicketDto> searchDetected(
+            String companyCode,
+            LocalDateTime dStartDate,
+            LocalDateTime dEndDate
+    ){
+        BooleanBuilder cond = new BooleanBuilder();
+        cond.and(userCompanyIdsContain(userCompanyIds))
+                .and(companyCodeEq(companyCode))
+                .and(isDetectedWithinDateRange(dStartDate, dEndDate));
+        List<QTicketDto> content = createTicketDtoQuery()
+                .where(cond)
+                .orderBy(ticket.created.desc())
+                        .stream().toList();
+//                .fetch();
+        return content;
+    }
+```
+
+## 해결 방법의 근거
