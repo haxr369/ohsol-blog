@@ -1,7 +1,7 @@
 ---
 title: 'QueryDSL Illegal pop() 해결 방법 with Stream'
 date: '2023-12-30'
-lastmod: '2023-01-07'
+lastmod: '2024-01-07'
 tags: ['db', 'java', 'QueryDSL', 'fetch', 'stream']
 draft: false
 summary: 'Illegal pop() with non-matching JdbcValuesSourceProcessingState 해결 방법'
@@ -184,7 +184,7 @@ java stream에 대해선 [Java stream으로 DB 쿼리 수 줄이기]를 참고�
 
 ### QueryDSL에서 Stream 자료형 출력
 
-```
+```javc
     @Override
     @Transactional
     public List<QTicketDto> searchDetected(
@@ -199,10 +199,24 @@ java stream에 대해선 [Java stream으로 DB 쿼리 수 줄이기]를 참고�
         List<QTicketDto> content = createTicketDtoQuery()
                 .where(cond)
                 .orderBy(ticket.created.desc())
-                        .stream().toList();
-//                .fetch();
+                        .stream()
+                        .collect(Collectors.toList());
+//                .fetch(); // fetch를 사용하면 Illegal.pop() 문제가 발생하고 stream을 쓰면 발생하지 않는다.
         return content;
     }
 ```
 
-## 해결 방법의 근거
+### 해결 방법의 근거
+
+`fetch`는 기본적으로 DB 쿼리 결과값을 **List**로 반환하고 `stream`은 DB 쿼리 결과를 **Java Stream** 자료형으로 반환한다.
+
+Java Stream은 원본 데이터를 수정하지 않는 이상 기본적으로 한 데이터 소스로 다른 데이터 소스를 **생성**하기 때문에 **Thread-safe**하다고 알려져 있다.
+하지만, List 같은 경우 여러 쓰레드가 한번에 수정할 수 있기 때문에 Thread-safe하지 않는다.
+
+> When executed in parallel, multiple intermediate results may be instantiated, populated, and merged so as to maintain isolation of mutable data structures. Therefore, even when executed in parallel with non-thread-safe data structures (such as ArrayList), no additional synchronization is needed for a parallel reduction. -Stream 인터페이스 주석-
+
+또한 위 인용을 참고하면 Stream 인터페이스의 `collect`를 사용하면 **병렬처리** 상황에서 각 멀티 쓰레드의 결과값을 병합하고, 가변 데이터 구조(**ArrayList**)의 격리를 유지한다.
+따라서 병렬 리덕션 상황에서는 추가적인 **동기화**가 필요없게 된다.
+
+`Illegal.pop()`은 `Hibernate`가 스택을 옳바르게 처리하지 못해서 발생하는 것이고, 더 깊이는 스택이 격리되지 않고 여러 쓰레드가 `pop`하려고 했기 때문이다.
+Stream 인터페이스의 **Collection**을 사용하여 데이터 소스의 **격리**를 유지할 수 있다.
