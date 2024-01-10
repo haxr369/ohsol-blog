@@ -10,8 +10,7 @@ import Footer from '@/components/Footer'
 import siteMetadata from '@/data/siteMetadata'
 import { ThemeProviders } from './theme-providers'
 import { Metadata } from 'next'
-import { SpeedInsights } from '@vercel/speed-insights/next'
-import { Analytics as Analys } from '@vercel/analytics/react'
+
 const space_grotesk = Space_Grotesk({
   subsets: ['latin'],
   display: 'swap',
@@ -83,11 +82,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="flex h-screen flex-col justify-between font-sans">
               <SearchProvider searchConfig={siteMetadata.search as SearchConfig}>
                 <Header />
-                <main className="mb-auto">
-                  {children}
-                  <SpeedInsights />
-                  <Analys />
-                </main>
+                <main className="mb-auto">{children}</main>
               </SearchProvider>
               <Footer />
             </div>
