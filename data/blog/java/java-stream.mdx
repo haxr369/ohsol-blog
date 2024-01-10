@@ -1,10 +1,10 @@
 ---
 title: JAVA stream으로 DB 쿼리 수 줄이기
-date: 2024-01-07
-lastmod: 2024-01-07
-tags: ['java', 'functional-interface', 'field-extractor']
+date: 2024-01-10
+lastmod: 2024-01-10
+tags: ['java', 'stream', 'collector']
 draft: false
-summary: 'JAVA 함수형 인스터페이스로 필드 추출기 만들기'
+summary: 'JAVA Stream으로 '
 ---
 
 ## 목차
@@ -12,3 +12,118 @@ summary: 'JAVA 함수형 인스터페이스로 필드 추출기 만들기'
 <TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
 
 ## 개요
+
+Java 8부터 Stream이라는 데이터 소스 처리 API를 사용할 수 있다. 먼저 Stream의 기본적인 개념을 설명하고
+SOC 프로젝트에서 사용한 방법을 공유한다.
+또한 [JAVA Functional Interface로 Field extractor 만들기](/blog/java/java-functional-interface-field-extractor)에서
+소개한 stream을 상세히 소개하려고 한다.
+
+내가 stream을 사용한 이유는 스트림을 이용해서 반복문을 간소화하고 `collect`를 이용해서 스트림을 그룹화하거나 다른 데이터 구조로 재배치하기 위함이다.
+
+기존 SOC 프로젝트는 DB에게 일련의 과정을 맞겨 처리 시간이 길고 메모리 사용량이 큰 반면, stream을 이용하여 처리 시간을 크게 줄였다.
+
+## Stream 연산의 종류
+
+**Stream**은 **Intermediate**(중간) 연산과 **Terminal**(최종) 연산 두가지로 나뉜다.
+
+```java:Stream_예시
+tickets.stream()
+.map(TicketDto::from) // 중간 연산자
+.sorted(Comparator.comparing(TicketDto::detected).reversed()) // 중간 연산자
+.collect(Collectors.toList()); // 최종 연산자
+```
+
+### 중간 연산자
+
+1. `filter(predicate)` : **predicate**는 `Boolean` 값으로 **predicate**가 false인 데이터는 필터링한다.
+2. `sorted` : `Comparator.comparing` 내부 메서드를 실행한 결과를 기준으로 오름차순 정렬한다. `reversed`를 붙이면 내림차순 정렬.
+3. `distinct` : `hashCode`나 `equals`를 통해 데이터 스트림에서 동일한 데이터를 제거한다.
+4. `map(Function mapper)` : 기존 데이터 스트림을 **mapper**에 넣어 새로운 데이터 스트림을 생성한다.
+
+중간 연산자는 호출될 때 실행하되 않고 최종 연산자가 호출될 때 실행되는 **Lazy Exceution**(지연 실행)을 하는 특징이 있다.
+그리고 중간 연산자는 항상 `Stream` 타입을 출력하기 때문에 **중간 연산자** **뒤에** 또 **다른 중간 연산자**를 붙일 수 있다.
+
+- Stateless Intermediate operations
+
+대부분의 중간 연산자는 **Stateless**하다. 즉 입력 스트림이 어떻든 출력 스트림이 달라지진 않는다.
+`map`이나 `filter` 같은 연산자는 **입력 스트림**에 따라 **필터링될** 데이터가 필터링 **안되거나**, **mapper**의 결과가 달라지진 않기 때문이다.
+
+- Stateful Intermediate operations
+
+`sorted`나 `distinct` 같은 연산자는 입력에 따라 출력이 달라지기 때문에 **Stateful**하다.
+
+### 최종 연산자
+
+1. `forEach(Function function)` : 입력 스트림 하나하나를 입력으로 **function**을 수행한다. **parallel stream**에서는 순서를 보장하지 않는다. `forEachOrdered()`는 **parallel stream**에서 순서를 보장하는 것만 `forEach()`와 차이가 있다.
+2. `toArray`, `toList` : `collect`는 스트림을 다른 데이터 구조로 재배치한다.
+3. `reduce` : 입력 스트림을 하나의 정리된 결과로 결합한다.
+4. `allMatch`, `anyMatch`, `nonMatch` : 모든 혹은 일부 데이터 스트림이 조건과 맞거나 전부 맞지 않는 것을 판단.
+5. `findFirst`, `findAny` : 스트림에서 순서를 고려해서 하나 혹은 순서를 고려하지 않고 하나를 반환한다.
+
+위 메서드를 보면 최종 연산자는 데이터 스트림에서 **결과**를 생성하거나 특정 조건에 맞는 데이터를 **찾는** 연산을 트리거한다.
+결과값이 하나의 값, collection 혹은 Optional 값이 될 수 있기 때문에 최종 연산자 다음에 또 다른 최종 연산자를 만들 수 없다.
+
+중간 연산자와 달리 최종 연산자는 호출되자 마자 실행된다. (**non-lazy**)ㄴ
+
+## primitive stream
+
+`IntStream`, `DoubleStream`, `LongStream` 같은 primitive stream은 다음과 같은 이유로 사용된다.
+
+1. 박싱과 언박싱 성능을 개선. 박싱이란 **int[]** 같은 원시 타입의 배열을 **List\<Integer\>** 같은 Wrapper 클래스 타입의 배열로 바꾸는 것.
+2. **sum**, **avg**, **max**, **main**과 같은 집계 함수를 사용. 마치 sql 같은 느낌이 든다.
+3. 원시 자료형 사용으로 메모리 사용 최적화
+
+## forEach와 forEachOrdered의 차이점
+
+- **forEach**
+
+**parallel stream** 처리에서 순서를 보장하지 않는다. 그렇기에 순서를 보장하지 않아도 괜찮지만, 속도가 필요한 상황에 쓰인다.
+
+- **forEachOrdered**
+
+**parallel stream** 처리에서 순서를 보장한다. 순서를 보장하기 위해 쓰레드끼리 통신하면서 효율성이 낮아진다.
+
+- **Sequential Stream**
+
+Sequential Stream에서는 forEach와 forEachOrdered가 차이가 없다. 항상 순서대로 처리되기 때문이다.
+
+- **Parallel Stream**
+
+Parallel Stream에서는 forEach는 순서 보장 X, forEachOrdered는 순서 보장 O.
+
+## 프로젝트에서 사용 경험
+
+```java
+Map<Object, Long> statistics = tickets.stream()
+.filter(ticketByteDto -> fieldExtractor.apply(ticketByteDto) != null) // 그룹핑하고자 하는 dto의 필드가 null이면 제외
+.collect(Collectors.groupingBy( // 1차 최종 연산자 : stream을 Map 형태로 바꿈.
+        fieldExtractor, // 필드 값
+        Collectors.counting() // dto 필드 값이 동일한 티켓의 수
+))
+// .entrySet().stream() 으로 Map 객체를 Stream으로 처리할 수 있게한다.
+.entrySet() // key-value pair의 Set을 생성
+.stream() // Set 데이터를 Stream으로 재구조화.
+.sorted(Map.Entry.comparingByValue(Comparator.reverseOrder())) // comparingByValue는 정렬 기준이 value라는 것
+.limit(5) // Comparator.reverseOrder()로 내림차순이지만, limit(5)가 있기에 티켓 수가 top-5인 데이터만 출력
+.collect(Collectors.toMap( // Stream<Set<Map.Entry<String,?>>>을 Map으로 재구성
+        Map.Entry::getKey,
+        Map.Entry::getValue,
+        (e1, e2) -> e1,
+        LinkedHashMap::new
+));
+```
+
+주석에 자세히 적어놨지만, 가장 중요한 점이 몇가지 있다.
+
+1. 최종 연산자는 **연속해서** 사용할 수 없다.
+2. `Map`은 `List`와 달리 바로 Stream으로 사용할 수 없고, `.entrySet().stream()`으로 `Stream<Set<Map.Entry<String,?>>>` 같이 사용해야한다.
+3. `Collectors.groupingBy`를 통해 마치 sql에 `GROUP BY` 같은 연산을 수행할 수 있다.
+4. `sorted()`를 통해 stream을 정렬할 수 있다. 또한 `Comparator.reverseOrder()`로 내림차순으로 만들 수 있다.
+
+3,4번 같은 점들이 나는 stream에서 sql의 향기(?)가 나서 데이터 스트림이 있을 때 **통계**를 구하거나 **재구성** 할 때 가장 먼저 **Stream**을 사용한다.
+
+DB 쿼리 없이 스트림에 쿼리를 날리는 것과 비슷한 느낌이기 때문이다.
+
+## 참조
+
+[Advance Interview Questions on Streams API](https://medium.com/@vikas.taank_40391/advance-interview-questions-on-streams-api-2e3ef18d398d)
