@@ -1,5 +1,5 @@
 ---
-title: JAVA 함수형 인터페이스로 Field extractor 만들기
+title: JAVA Functional Interface로 Field extractor 만들기
 date: 2024-01-07
 lastmod: 2024-01-07
 tags: ['java', 'functional-interface', 'field-extractor']
@@ -12,3 +12,126 @@ summary: 'JAVA 함수형 인스터페이스로 필드 추출기 만들기'
 <TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
 
 ## 개요
+
+함수형 인터페이스는 [JAVA 함수형 인터페이스 그리고 Lambda](/blog/java/java-functional-interface)에서 기본적인 개념은 다뤘다.
+이번 포스팅은 함수형 인터페이스를 이용해서 여러개의 **필드값 추출기**를 한개로 **통합**하는 과정을 작성했다.
+
+<img
+  src="/static/images/java/java-ticket-filter-function.png"
+  alt="함수형 인터페이스를 이용해서 티켓 필터링 구현"
+/>
+
+위 이미지에서 보이는 것처럼 티켓 데이터에서 **Top-5**의 필드 값을 구하는 `시나리오 발생 현황` 기능이 있다.
+대시보드 상에 그래프는 변할 수 있고 사용자가 임의로 추가, 제거할 수 있다.
+
+위 기능을 구현하기위해선 백엔드는 **수 만개**의 티켓 데이터를 읽고 **각 필드값**으로 **그룹화**한 후, 해당 **그룹의 티켓 수**를 구해서
+브라우저로 전송해야한다.
+
+## 비효율적 상황 - 필드마다 다른 getter
+
+```java:Ticket.java
+@Getter
+@Entity
+@Table(name = "TICKET")
+public class Ticket extends BaseEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column
+    private String status;
+
+    @Column
+    private LocalDateTime detected;
+
+    @Column
+    private String scenarioName;
+
+    @Column
+    private String eventName;
+
+    @Column
+    private String sourceIp;
+
+    @Column
+    private String destinationIp;
+}
+
+```
+
+Ticket 엔티티가 있을 때 `detected`나 `scenarioName` 같은 필드 이름으로 그룹화하기 위해선
+Ticket **객체**에서 **getter**를 이용해서 **필드값**을 추출해야한다.
+그렇다면 **어떤 필드**의 **통계**를 얻고 싶다면, 그 **필드**에 맞는 `getter`를 찾아서 호출해야한다.
+
+위와 같이 getter를 찾기 위해선 6개의 분기를 만들고 각 분기에 특정 필드의 getter를 호출해서 티켓 데이터를 그룹화하는 로직을 작성할 수 있다.
+하지만, 호출하는 `getter`만 다를 뿐 데이터를 그룹화하고 그룹의 티켓 개수를 구하는 로직은 반복될 것이다.
+
+## 해결 방법 - DTO.class.getMethod
+
+문제의 해결 방법은 그룹화할 **필드 이름**을 받으면 해당 **필드 값**을 출력하는 `getter`를 찾고 그룹의 **티켓 개수**를 구하면된다.
+
+Java의 **Reflection**을 이용해서 메서드 이름으로 `Ticket` 클래스의 내부 메서드를 얻을 수 있다.
+
+```java:FieldExtractor
+  // 입력은 Ticket, 출력은 ? (제네릭 와일드 카드)
+  private Function<Ticket, ?> getFieldExtractor(String fieldName) {
+        try {
+            // Reflection을 이용해서 DTO 클래스에서 <fieldName>와 동일한 이름의 메서드를 추출한다.
+            Method getterMethod = Ticket.class.getMethod(fieldName);
+            // 람다식으로 추출한 메서드를 호출한다.
+            return ticketDto -> {
+                try {
+                    return getterMethod.invoke(ticketDto);
+                } catch (IllegalAccessException | InvocationTargetException e) {
+                    throw new RuntimeException("Error extracting field value", e);
+                }
+            };
+        } catch (NoSuchMethodException e) {
+            throw new IllegalArgumentException("Invalid field name: " + fieldName);
+        }
+    }
+```
+
+`FieldExtractor`는 입력 받은 **필드**의 `getter`를 출력하는 **함수형 인터페이스**.
+[이전 포스팅](/blog/java/java-functional-interface)을 참고하면,
+`Function` 자료형 함수형 인터페이스는 **1개** 입력과 **1개**의 추상 메서드를 출력을 할 수 있고, `apply` 메서드를 호출해서 인터페이스의 추상 메서드를 실행시킬 수 있다.
+
+```java:getTicketStatistics
+    Function<TicketByteDto, ?> fieldExtractor = getFieldExtractor(field);
+    log.info("field : {}",field);
+    Map<Object, Long> statistics = tickets.stream()
+            .filter(ticketByteDto -> fieldExtractor.apply(ticketByteDto) != null) // apply를 통해 메서드 호출
+            .collect(Collectors.groupingBy(
+                    fieldExtractor,
+                    Collectors.counting()
+            )).entrySet().stream()
+            .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
+            .limit(5)
+            .collect(Collectors.toMap(
+                    Map.Entry::getKey,
+                    Map.Entry::getValue,
+                    (e1, e2) -> e1,
+                    LinkedHashMap::new
+            ));
+```
+
+`Stream`에 관해선 [JAVA stream으로 DB 쿼리 수 줄이기](/blog/java/java-stream)를 통해 설명한다.
+
+`@FunctionalInterface`는 오직 **하나의** 추상 메서드만 존재함을 확인하는 어노테이션이다.
+
+이 어노테이션이 붙은 함수형 인터페이스를 `getFieldExtractor`가 출력하도록 하고 출력물인 `fieldExtractor`의 메서드를 `apply`를 통해 호출할 수 있다.
+
+## 정리
+
+<img
+  src="/static/images/java/java-functional-interface-flow.png"
+  alt="함수형 인터페이스를 이용한 필드추출기 흐름도"
+/>
+
+글로 정리하면 아래와 같다.
+
+1. 값 추출을 위한 필드명 입력
+2. `Ticket` 객체에서 해당 필드의 값을 출력하는 `getter`를 실행시키는 함수형 인터페이스를 `getFieldExtractor`가 출력
+3. `getFieldExtractor`로 얻은 `fieldExtractor` 함수형 인터페이스의 메서드(필드 getter)를 `apply`로 호출
+4. 입력 받은 필드명의 필드값 출력
