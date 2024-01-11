@@ -16,12 +16,7 @@ summary: 'JAVA 함수형 인스터페이스로 필드 추출기 만들기'
 함수형 인터페이스는 [JAVA 함수형 인터페이스 그리고 Lambda](/blog/java/java-functional-interface)에서 기본적인 개념은 다뤘다.
 이번 포스팅은 함수형 인터페이스를 이용해서 여러개의 **필드값 추출기**를 한개로 **통합**하는 과정을 작성했다.
 
-<img
-  src="/static/images/java/java-ticket-filter-function.png"
-  alt="함수형 인터페이스를 이용해서 티켓 필터링 구현"
-/>
-
-위 이미지에서 보이는 것처럼 티켓 데이터에서 **Top-5**의 필드 값을 구하는 `시나리오 발생 현황` 기능이 있다.
+티켓 데이터에서 **Top-5**의 필드 값을 구하는 `시나리오 발생 현황` 기능이 있다.
 대시보드 상에 그래프는 변할 수 있고 사용자가 임의로 추가, 제거할 수 있다.
 
 위 기능을 구현하기위해선 백엔드는 **수 만개**의 티켓 데이터를 읽고 **각 필드값**으로 **그룹화**한 후, 해당 **그룹의 티켓 수**를 구해서
@@ -46,16 +41,12 @@ public class Ticket extends BaseEntity {
     private LocalDateTime detected;
 
     @Column
-    private String scenarioName;
-
-    @Column
-    private String eventName;
+    private String securityName;
 
     @Column
     private String sourceIp;
 
-    @Column
-    private String destinationIp;
+    ...
 }
 
 ```

@@ -94,8 +94,8 @@ Parallel Stream에서는 forEach는 순서 보장 X, forEachOrdered는 순서 �
 ## 프로젝트에서 사용 경험
 
 ```java
-Map<Object, Long> statistics = tickets.stream()
-.filter(ticketByteDto -> fieldExtractor.apply(ticketByteDto) != null) // 그룹핑하고자 하는 dto의 필드가 null이면 제외
+Map<Object, Long> statis = tickets.stream()
+.filter(ticketDto -> fieldExtractor.apply(ticketDto) != null) // 그룹핑하고자 하는 dto의 필드가 null이면 제외
 .collect(Collectors.groupingBy( // 1차 최종 연산자 : stream을 Map 형태로 바꿈.
         fieldExtractor, // 필드 값
         Collectors.counting() // dto 필드 값이 동일한 티켓의 수
