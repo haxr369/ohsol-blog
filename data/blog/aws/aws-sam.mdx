@@ -1,0 +1,175 @@
+---
+title: AWS SAM 정리와 사용법
+date: 2024-01-13
+tags: ['AWS', 'sam', 'lambda', 'DVA-C02', 'DynamoDB', 'api-GateWay']
+draft: false
+summary: 'AWS의 SAM에 대해 정리하고 사용법을 익혀서 서버리스 app을 만들어보자!'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+이번 포스팅은 앞으로 있을 **짱구 프로젝트**를 준비하기 앞서 **서버리스 app** 개발 준비의 일환이다.
+
+## Serverless Application Model, SAM
+
+<img src="/static/images/aws/aws-sam_squirrel_1.jpg" alt="SAM 다람쥐 사진" />
+
+**SAM**은 서버리스 애플리케이션 개발 및 배포를 위한 프레임워크로 모든 구성은 YAML 형식으로 실행된다.
+간단한 YAML 파일로 SAM CLI을 통해 복잡한 **CloudFormation** 템플릿을 생성할 수 있다.
+
+따라서 **CloudFormation**와 호환이 가능하므로 모든 CloudFormation 구조(**출력값, 매핑, 매개변수, 자원, ...**)를 실시할 수 있다.
+
+SMA에서 CodeDeploy로 람다 함수를 배포할 수 있고, **Lambda**, **API Gateway**, 그리고 **DynamoDB**를 로컬 환경에서 실행시킬 수 있게 도와준다.
+
+## SMA 템플릿 규칙
+
+- **Transform** : CloudFormation은 이 템플릿을 CloudFormation용 템플릿으로 변환하도록 함.
+- **Write code** : 함수, DB, API GateWay 생성을 지원
+  - AWS::Serverless::Function // 서버리스 람다 함수
+  - AWS::Serverless::api // API GateWay
+  - AWS::Serverless::SimpleTable // DynamoDB 테이블
+- **Package & Deploy** : SAM 패키징과 배포를 위해 두 명령어가 필요
+  - `aws cloudformation package` or `sam package`
+  - `aws cloudformation deploy` or `sam deploy`
+
+## SAM CLI로 람다 함수 배포하기
+
+SMA CLI와 AWS Toolkits를 통해서 로컬에 람다와 같은 실행 환경을 구성하고 실행 코드를 디버깅할 수 있다.
+
+### SAM CLI 설치하기
+
+[AWS 공식 SAM 설치 페이지](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html)를 통해
+자신의 로컬 운영체제와 맞는 방법으로 설치할 수 있다.
+
+```sh
+sam --version
+SAM CLI, version 1.107.0
+```
+
+### SAM 프로젝트 생성
+
+[AWS python3 SAM 예제](https://github.com/aws/aws-sam-cli-app-templates/tree/master/python3.10/hello/%7B%7Bcookiecutter.project_name%7D%7D)
+
+기본적으로 `sam init`을 통해 필요한 모든 파일과 런타임 설정을 자동으로 할 수 있지만, 학습을 위해 하나씩 생성한다.
+
+```sh:디렉토리-구조
+/SAM
+    /src
+        /app.py
+    /commands.sh
+    /template.yaml
+```
+
+아래는 요청이 들어오기만 하면 `Hellow world`를 응답하는 매우 간단한 함수다.
+
+```python:app.py
+def lambda_handler(event, context):
+    return "Hellow world"
+```
+
+매우 간단한 template 설정이다.
+
+```YAML:template.yaml
+# SAM FILE
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Lambda function 출발점
+
+Resources:
+  HelloWorldFunction:
+    Type: AWS::Serverless::Function # Lambda 함수 실행을 의미
+    Properties:
+      CodeUri: src/ # app.py의 위치
+      Handler: app.lambda_handler # 핸들러는 "파일이름.함수이름" 의 형식을 가져야한다.
+      Runtime: python3.10 # 함수 실행 런타임을 작성
+      Timeout: 3
+```
+
+### 프로젝트 배포
+
+`commands.sh` 파일로 가서 `aws s3 mb s3://sol-code-sam`을 작성한다.
+`aws s3 mb s3://sol-code-sam`을 통해 버킷을 생성하려면 AWS CLI에 걔정을 등록해놔야한다.
+
+앞서 생성한 S3 버킷에 코드를 업로드하고 **Artifact**를 성공적으로 패키징되고 `gen/template-generated.yaml`에 **CloudFormation** 템플릿을 생성했다.
+
+```sh:sam-package
+# package cloudformation
+aws cloudformation package
+    --s3-bucket sol-code-sam
+    --template-file template.yaml
+    --output-template-file gen/template-generated.yaml
+
+Uploading to a9-------29  291 / 291.0  (100.00%)
+Successfully packaged artifacts and wrote output template to file gen/template-generated.yaml.
+Execute the following command to deploy the packaged template
+aws cloudformation deploy --template-file /Users/solsol/asac/SAM/gen/template-generated.yaml --stack-name <YOUR STACK NAME>
+```
+
+```sh:배포-명령어
+sam deploy
+  --template-file gen/template-generated.yaml # 앞서서 생성한 CloudFormation 템플릿
+  --stack-name hello-world-sam # 임의의 이름
+  --capabilities CAPABILITY_IAM # IAM ROLE 자동 설정
+```
+
+위 명령어를 실행시키면 아래처럼 **CloudFormation**에 스택이 생성된다. 한국어는 "?"로 찍히기 때문에 설명 부분을 다 영어로 작성해야할 것 같다.
+
+<img src="/static/images/aws/aws-sam-cloudformation-stack.png" alt="SAM 스택 배포" />
+
+또한 CloudFormation으로 람다함수와 IAM Role이 자동 생성된 것을 확인할 수 있다.
+
+<img src="/static/images/aws/aws-sam-create-lambda-iam.png" alt="SAM 스택 생성" />
+
+### 람다 생성 확인
+
+AWS 람다 대시보드에서 `Test`를 누르면 아래 이미지처럼 `app.py` 코드가 실행되는 것을 알 수 있다.
+
+<img src="/static/images/aws/aws-sam-lambda-test.png" alt="SAM 람다 테스트" />
+
+`app.py` 함수에 작성된 것처럼 Test 했을 때 `Hello world`가 출력되는 것을 알 수 있었다.
+
+## 로컬 실행 방법
+
+`sam local start-lambda` 명령어를 통해 로컬에서 **Lambda** 함수를 실행하는 endpoint를 생성할 수 있다.
+또한 자동 테스트도 가능하다.
+
+`sam local invoke`를 입력해서 페이로드를 Lambda 함수에 실어서 호출할 수 있다.
+한번 호출하고 호출이 완료되면 함수는 종료된다.
+
+`sam local start-api`를 통해 **API GateWay**를 통해 모든 함수를 실행할 수 있는 로컬 HTTP 서버를 시작할 수 있다.
+람다 함수 코드가 수정되면 자동으로 reload되고 API가 업데이트된다. 만약 Lambda와 연결된 API GateWay가 없다면 실행할 수 없다.
+
+`sam local hgenerate-event`를 사용해서 Lambda 함수의 이벤트를 생성할 수 있다.
+예를 들어 특정 키에서 버킷에 넣을 S3 이벤트를 생성하고, `sam local generate-event`를 이용해서 이벤트 소스용 샘플 페이로드를 생성할 수 있다.
+
+### 실행시켜보기
+
+```sh:invoke
+% sam local invoke
+Invoking app.lambda_handler (python3.10)
+Local image was not found.
+Removing rapid images for repo public.ecr.aws/sam/emulation-python3.10
+Building image...........................................................................................................................................................................................................................................................................................................
+Using local image: public.ecr.aws/lambda/python:3.10-rapid-x86_64.
+
+Mounting /Users/solsol/asac/SAM/src as /var/task:ro,delegated, inside runtime container
+START RequestId: f5444480-e826-4b57-992d-a1df896c3246 Version: $LATEST
+Loading function
+END RequestId: dcb5d7d8-f7c2-4d2f-b6c0-b88e3984398d
+REPORT RequestId: dcb5d7d8-f7c2-4d2f-b6c0-b88e3984398d  Init Duration: 0.78 ms  Duration: 433.09 ms    Billed Duration: 434 ms  Memory Size: 128 MB     Max Memory Used: 128 MB
+"Hellow world"
+```
+
+`sam local invoke` 실행결과는 위처럼 도커 컨테이너를 생성하고 Lambda 함수를 실행시켜 그 결과를 보여준다.
+처음 `sam local invoke`를 명령하면 이미지 생성까지 시간이 걸리지만 다음부터는 이미 존재하는 이미지를 실행하기 때문에 금방 실행된다.
+
+### Endpoint 실시간으로 켜놓기
+
+매번 컨테이너 만들고 실행시킬 수 있지만, 상시로 켜놓고 테스트하거나 디버깅할 수 있는 방법이 있다.
+
+1. `sam local start-lambda`로 로컬에서 **Lambda** 함수를 실행하는 endpoint를 생성한다.
+2. `aws lambda invoke --function-name "HelloWorldFunction" --endpoint-url "http://127.0.0.1:3001" --no-verify-ssl out.txt`를 통해 빠르게 Lambda 함수를 실행시키고 결과를 저장한다.
+
+위 방법을 사용하면 앞선 `sam local invoke`을 이용해서 함수를 실행시키는 것 보다 매우 빠르게 실행시키고 결과도 `out.txt`에 저장할 수 있다.
