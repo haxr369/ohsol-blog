@@ -1,0 +1,21 @@
+---
+title: AWS Serverless app 만들어보기
+date: 2024-01-14
+lastmod: 2024-01-14
+tags: ['AWS', 'Lambda', 'SAM', 'DynamoDB', 'API-Gateway', 'DVA-C02']
+draft: false
+summary: 'SAM을 이용해서 서버리스 app 만들어보기'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+이번 포스팅은 앞으로 있을 짱구 프로젝트를 준비하기 앞서 서버리스 app 개발 준비의 일환이다.
+또한 간단한 SAM의 사용법은 [AWS SAM 정리와 사용법](https://ohsol-blog.vercel.app/blog/aws/aws-sam)을 참고하자.
+
+VARTEQ에서 진행한 [밴치마크 테스트](https://varteq.com/java-vs-nodejs-on-aws-lambda-benchmark-survey/)에서는 Node.js 보다는 검증되고 빠른 속도의 **Java with ORM**를 이용해서 **Lambda** 함수를 실행시키는게 좋다고 한다.
+하지만, 대부분의 **Lambda** 예제들이 **Node.js**로 작성되었기에 이번 예제도 **Node.js**로 진행한다.
+
+이번 포스팅은 Lambda의 기능 보다는 SAM 프레임워크의 `template.yaml`을 통해 **Lambda**m, **DynamoDB**, 그리고 **API Gateway**를 구축하는 방법을 작성한다.
+따라서 **DynamoDB**에 CRUD하는 **Lambda** 함수를 API로 만들어서 **API Gateway**로 배포하는 걸 목표로한다.
