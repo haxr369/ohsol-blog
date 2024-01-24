@@ -89,7 +89,10 @@ export default function ListLayout({
               <input
                 aria-label="Search articles"
                 type="text"
-                onChange={(e) => setSearchValue(e.target.value)}
+                onChange={(e) => {
+                  console.log(e.target.value)
+                  setSearchValue(e.target.value)
+                }}
                 placeholder="Search articles"
                 className="block w-full rounded-md border border-gray-300 bg-white px-4 py-2 text-gray-900 focus:border-primary-500 focus:ring-primary-500 dark:border-gray-900 dark:bg-gray-800 dark:text-gray-100"
               />

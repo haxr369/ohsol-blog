@@ -19,3 +19,35 @@ VARTEQ에서 진행한 [밴치마크 테스트](https://varteq.com/java-vs-nodej
 
 이번 포스팅은 Lambda의 기능 보다는 SAM 프레임워크의 `template.yaml`을 통해 **Lambda**m, **DynamoDB**, 그리고 **API Gateway**를 구축하는 방법을 작성한다.
 따라서 **DynamoDB**에 CRUD하는 **Lambda** 함수를 API로 만들어서 **API Gateway**로 배포하는 걸 목표로한다.
+
+[AWS 자습서](https://docs.aws.amazon.com/ko_kr/apigateway/latest/developerguide/http-api-dynamo-db.html)를 참고해서 개발했다.
+
+<img src="/static/images/aws/aws-sam-api-gateway.png" alt="서버리스 서비스 3계층 구조" />
+
+## DynamoDB 테이블 생성
+
+**DynamoDB**는 10밀리초의 지연시간과 **수평 확장**(scale up)이 자동화된다.
+또한 다중 리전 복제 기능을 가진 NoSQL 데이터베이스인 **Amazon Dynamo 글로벌 테이블**을 통해 **다중 활성 다중 리전 복제**(한 리전의 테이블 수정이 다른 리전의 테이블로 복사)를 1초내 지연 시간으로 이뤄서 비즈니스 영속성과 일관성을 유지시킨다.
+NoSQL이지만, 무려 **ACID**(원자성, 일관성, 격리성, 내구성)를 지원하기 때문에 트랜젝션 당 최대 100개의 작업에 대해 **all-or-nothing**을 보장한다.
+
+### DynamoDB 시작 방법
+
+1. [DynamoDB 콘솔](https://console.aws.amazon.com/dynamodb/)에서 DynamoDB 콘솔 접속
+2. 테이블 생성
+3. 테이블 명에 `http-crud-tutorial-items`를 입력
+4. 파티션 키(Partition key)에 id를 입력
+
+<img src="/static/images/aws/aws-sam-dynamodb-tutorial.png" alt="DynamoDB 테이블 생성 결과" />
+
+## Lambda 함수 생성
+
+**AWS Lambda**는 서버를 프로비저닝하지 않고도 코드를 실행시킬 수 있는 컴퓨팅 서비스다.
+Lambda는 필요할 때만 함수를 실행하고 자동으로 확장되며, 사용한 컴퓨팅 시간만큼만 비용을 지불한다.
+
+**Lambda**는 함수 당 최대 10GB RAM을 사용할 수 있고, **HTTP API**(API Gateway, ALB)로 동기적 호출이나 **Event Queue**를 이용한 비동기적 호출이 가능하다.
+
+**Lambda**는 단시간에 수요가 몰릴 때 빠르게 스케일 업하고 수요가 없을 때는 **0**으로 스케일 다운할 때 사용된다.
+
+- **파일 전처리** : 파일을 **S3**에 업로드하고, Lambda로 데이터를 실시간으로 처리한다.
+- **스트림 처리** : **Amazon Kinesis**와 함께 거래 주문 처리, 로그 필터링, 사물 인터넷(IoT) 디바이스 데이터 텔레메트리 및 계측을 위한 **실시간 스트리밍 데이터**를 처리한다.
+- **IoT 백엔드** : Lambda로 서버리스 백엔드를 구축하여 고가용성 구성으로 자동으로 스케일 업/스케일 다운되는 IoT 서드 파티 API 요청을 처리한다.

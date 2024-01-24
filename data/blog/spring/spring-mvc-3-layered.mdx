@@ -1,10 +1,10 @@
 ---
 title: Spring MVC와 3-Layered Architecture
 date: 2023-10-31
-lastmod: 2023-10-31
-tags: ['java', 'MVC', '3-lastmod-Architecture']
+lastmod: 2024-01-21
+tags: ['java', 'MVC', '3-layered-Architecture', 'spring']
 draft: false
-summary: 'Spring 프레임워크에서 자주 쓰이는 어노테이션 정리'
+summary: 'Spring MVC와 3계층 아키텍쳐 정리'
 ---
 
 ## 목차
@@ -14,20 +14,20 @@ summary: 'Spring 프레임워크에서 자주 쓰이는 어노테이션 정리'
 ## Spring과 Spring boot의 차이
 
 Spring과 Spring boot의 관계는 React와 CRA 사이 관계와 유사한다.
-Spring 단독으로 사용하면 모든 의존성을 개발자가 관리해야하고 WAR을 생성하기 위해 별도의 웹 컨테이너(WAS)가 필요하다.
-대신 Spring Boot는 Spring과 달리 JAR 파일로 패키징되기 때문에 단독으로 JRE만 있어도 실행 가능하다. (java -jar sol-was.jar)
+Spring 단독으로 사용하면 모든 의존성을 개발자가 관리해야하고 WAR을 실행하기 위해 별도의 웹 컨테이너(WAS)가 필요하다.
+대신 Spring Boot는 Spring과 달리 **JAR** 파일로 패키징되기 때문에 단독으로 **JRE**(Java Runtime Environment)만 있어도 실행 가능하다.
 그리고 내장 톰캣이 있기 때문에 언제 어디서나 동일한 JAR 파일을 가지고 같은 환경에서 Spring Boot를 배포할 수 있다.
 
 ## MVC 패턴
 
-MVC (모델-뷰-컨트롤러) 패턴은 소프트웨어의 비즈니스 로직과 화면을 구분하여 **관심사 분리**를 제공한다.
+**MVC** (모델-뷰-컨트롤러) 패턴은 소프트웨어의 비즈니스 로직과 화면을 구분하여 **관심사 분리**를 제공한다.
 
-모델은 시스템에서 필요한 데이터를 관리하고 변경사항이 발생할 경우 뷰와 컨트롤러에게 알린다. 뷰는 시스템이 데이터를 보여주는 방식을 정의한다.
-컨트롤러는 사용자로부터의 입력에 대한 응답으로 모델 또는 뷰를 업데이트하는 로직을 포함한다.
+**모델**은 시스템에서 필요한 **데이터**를 관리하고 변경사항이 발생할 경우 뷰와 컨트롤러에게 알린다. **뷰**는 시스템이 데이터를 **보여주는 방식**을 정의한다.
+**컨트롤러**는 사용자로부터의 입력에 대한 응답으로 모델 또는 뷰를 업데이트하는 **로직**을 포함한다.
 
 ### Spring MVC 프레임워크의 구성
 
-Spring MVC는 Front Controller와 Controller가 model을 주고 받으면서 사용자의 요청을 view로 보여준다.
+**Spring MVC**는 **Front Controller**와 **Controller**가 **model**을 주고 받으면서 사용자의 요청에 **view**를 응답한다.
 
 <img alt="spring mvc" src="/static/images/spring/spring-mvc-architecture.png" />
 
