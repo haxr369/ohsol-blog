@@ -1,0 +1,18 @@
+---
+title: AWS Serverless API 만들어보기 (2)
+date: 2024-01-25
+lastmod: 2024-01-25
+tags: ['AWS', 'Lambda', 'DynamoDB', 'API-Gateway', 'SAM']
+draft: false
+summary: '자동으로 서버리스 API 배포하기'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+이번 포스팅은 앞으로 있을 짱구 프로젝트를 준비하기 앞서 서버리스 app 개발 준비의 일환이다.
+간단한 SAM의 사용법은 [AWS SAM 정리와 사용법](https://ohsol-blog.vercel.app/blog/aws/aws-sam)을 참고하고,
+수동으로 서버리스 API를 생성하는 방법은 [AWS Serverless API 만들어보기 (1)](https://ohsol-blog.vercel.app/blog/aws/aws-serverless-start)를 참고하자.
+
+이번 포스팅은 SAM 프레임워크의 `template.yaml`을 통해 **Lambda**m, **DynamoDB**, 그리고 **API Gateway**를 구축하는 방법을 작성한다.
