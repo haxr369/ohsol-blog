@@ -1,5 +1,5 @@
 ---
-title: AWS Serverless API 만들어보기 (2)
+title: AWS Serverless API 만들어보기 (2) [미완]
 date: 2024-01-25
 lastmod: 2024-01-25
 tags: ['AWS', 'Lambda', 'DynamoDB', 'API-Gateway', 'SAM']
@@ -16,3 +16,181 @@ summary: '자동으로 서버리스 API 배포하기'
 수동으로 서버리스 API를 생성하는 방법은 [AWS Serverless API 만들어보기 (1)](https://ohsol-blog.vercel.app/blog/aws/aws-serverless-start)를 참고하자.
 
 이번 포스팅은 SAM 프레임워크의 `template.yaml`을 통해 **Lambda**m, **DynamoDB**, 그리고 **API Gateway**를 구축하는 방법을 작성한다.
+
+## SAM 프로젝트 생성
+
+[AWS SAM 정리와 사용법](https://ohsol-blog.vercel.app/blog/aws/aws-sam)에서 이미 SAM CLI를 설치했기 때문에 설치 과정은 생략한다.
+
+```:디렉토리-구조
+/http-api-tutorial
+    /template.yaml
+    /dynamo-handler
+        /app.mjs
+    /gen
+        /template-generated.yaml
+```
+
+### Lambda 함수 핸들러 작성
+
+```mjs:app.mjs
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  ScanCommand,
+  PutCommand,
+  GetCommand,
+  DeleteCommand,
+} from "@aws-sdk/lib-dynamodb";
+
+const client = new DynamoDBClient({});
+
+const dynamo = DynamoDBDocumentClient.from(client);
+
+const tableName = "http-crud-tutorial-items";
+
+export const handler = async (event, context) => {
+  let body;
+  let statusCode = 200;
+  const headers = {
+    "Content-Type": "application/json",
+  };
+
+  try {
+    switch (event.routeKey) {
+      case "DELETE /items/{id}":
+        await dynamo.send(
+          new DeleteCommand({
+            TableName: tableName,
+            Key: {
+              id: event.pathParameters.id,
+            },
+          })
+        );
+        body = `Deleted item ${event.pathParameters.id}`;
+        break;
+      case "GET /items/{id}":
+        body = await dynamo.send(
+          new GetCommand({
+            TableName: tableName,
+            Key: {
+              id: event.pathParameters.id,
+            },
+          })
+        );
+        body = body.Item;
+        break;
+      case "GET /items":
+        body = await dynamo.send(
+          new ScanCommand({ TableName: tableName })
+        );
+        body = body.Items;
+        break;
+      case "PUT /items":
+        let requestJSON = JSON.parse(event.body);
+        await dynamo.send(
+          new PutCommand({
+            TableName: tableName,
+            Item: {
+              id: requestJSON.id,
+              price: requestJSON.price,
+              name: requestJSON.name,
+            },
+          })
+        );
+        body = `Put item ${requestJSON.id}`;
+        break;
+      default:
+        throw new Error(`Unsupported route: "${event.routeKey}"`);
+    }
+  } catch (err) {
+    statusCode = 400;
+    body = err.message;
+  } finally {
+    body = JSON.stringify(body);
+  }
+
+  return {
+    statusCode,
+    body,
+    headers,
+  };
+};
+```
+
+`app.mjs`에는 [AWS Serverless API 만들어보기 (1)](https://ohsol-blog.vercel.app/blog/aws/aws-serverless-start)에서 작성한 코드와 동일한 핸들러를 작성한다.
+
+### template.yaml 작성 [미완]
+
+```yaml:template.yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Example template for an HTTP API that creates, updates, and deletes items in DynamoDB
+
+Globals:
+  Function:
+    Timeout: 10
+
+Resources:
+  DDBHandlerFunction:
+    Type: AWS::Serverless::Function // Lambda 함수 타입
+    Properties:
+      CodeUri: dynamo-handler/
+      Handler: app.handler
+      Runtime: nodejs18.x
+      Policies:                    // 정책으로 테이블 이름 참조
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ItemsTable
+      Events:                       // 함수에 리소스 경로와 HTTP 메서드를 설정
+        GetAllItems:
+          Type: HttpApi
+          Properties:
+            Path: /items
+            Method: GET
+        GetAnItem:
+          Type: HttpApi
+          Properties:
+            Path: /items/{id}
+            Method: GET
+        DeleteAnItem:
+          Type: HttpApi
+          Properties:
+            Path: /items/{id}
+            Method: DELETE
+        CreateOrUpdateItem:
+          Type: HttpApi
+          Properties:
+            Path: /items
+            Method: PUT
+
+  ItemsTable: // DynamoDB 리소스 참조 이름
+    Type: AWS::Serverless::SimpleTable // DynamoDB 타입
+    Properties:
+      PrimaryKey: // 파티션키 설정
+        Name: id
+        Type: String
+      TableName: http-crud-tutorial-items // 실제 DynamoDB 테이블 이름
+
+Outputs:
+  ApiEndpoint:
+    Description: "The invoke URL for our HTTP API"
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/items"
+  Function:
+    Description: "DynamoDB handler function ARN"
+    Value: !GetAtt DDBHandlerFunction.Arn
+
+```
+
+### 템플릿 패키징 및 배포 [미완]
+
+```:패키징-및-cloudformation-템플릿-생성
+aws cloudformation package --s3-bucket my-serverless-app-sol --template-file template.yaml --output-template-file gen/template-generated.yaml
+```
+
+```:배포
+sam deploy --template-file gen/template-generated.yaml --stack-name http-dynamodb-crud --capabilities CAPABILITY_IAM
+```
+
+```:sam_template_검증
+sam validate
+```
