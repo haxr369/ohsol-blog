@@ -1,7 +1,7 @@
 ---
 title: '[ASAC 주간 스터디] AWS EC2 개념과 실습'
 date: 2024-02-14
-lastmod: 2024-02-14
+lastmod: 2024-02-16
 tags: ['AWS', 'EC2', 'ASAC-WEEKLY-STUDY']
 draft: false
 summary: 'AWS EC2 관련 내용 정리하기'
@@ -17,10 +17,20 @@ EC2 User Data, Security Group, EC2 타입 (간단하게), IAM Role, 구매 옵�
 
 ## EC2 개요
 
-EC2란 Elastic Compute Cloutd의 약자 = Infrastructure as a Service
-클라우드란 컴퓨팅 기능을 필요에 따라(온디멘드하게) 임대해 사용하는 것.
+<img src="/static/images/aws/study/ec2-basic-arch.png" />
 
-EC2가 실질적으로 제공하는 서비스
+EC2(Elastic Compute Cloutd) Infrastructure as a Service 컴퓨팅 기능을 필요에 따라(온디멘드하게) 임대해 사용한다.
+웹 서비스 인터페이스를 이용해 운영체제, CPU와 RAM 같은 컴퓨팅 자원, 저장소, 네트워크 보안 설정을 통해 사용자 정의 인스턴스를 생성할 수 있다.
+**AWS EC2 Auto Scaling**을 통해 수십 수백개 인스턴스를 동시에 생성 및 관리할 수 있다.
+
+### EC2랑 VM 그리고 Server의 차이?
+
+**Virtual Machine(VM)**은 호스트 머신에서 다른 실제 머신을 **에뮬레이션**하는 소프트웨어이다.
+**Server**는 클라이언트 컴퓨터로부터 오는 요청에 응답하는 장치나 프로그램 집합이다.
+**Virtual Server**은 한 호스트 머신에서 구동되는 여러 VM이다. 각 VM에는 게스트 OS와 서버 애플리케이션을 둘 수 있다.
+**EC2** 인스턴스는 AWS Cloud 컴퓨팅 플랫폼에서 동작하는 VM이다.
+
+**EC2가 실질적으로 제공하는 서비스**
 
 1. EC2라는 가상 머신
 2. EBS라는 가상 드라이브에 데이터 저장
