@@ -110,7 +110,11 @@ MFA는 비밀번호와 security device를 함께 사용하는 것이다. 만약 
 4. Hardware Key Fob MFA Device
 5. Hardware Key Fob MFA Device for AWS GovCloud
 
-## AWS CLI
+## AWS CLI & SDK
+
+AWS API를 호출할 때는 access key나 secret key 같은 자격증명을 함께 보내야한다. 그래야 aws가 누가 보낸 요청인지 판단하고 인증하기 때문이다.
+SDK와 CLI는 위에 **CLI Credentials Provider Chain**에 따라 서명을 얻고 자동으로 API 요청할 때 함께 보낸다.
+이 서명은 SigV4 프로토콜을 이용하며 **Authorization header에 서명을 넣어 전달**하거나 쿼리스트링으로 `X-Amz-Signature` 키에 서명을 넣어 전달하는 방법이 있다.
 
 ### 다양한 aws에 접속하는 방법
 
@@ -130,10 +134,129 @@ access key는 비밀번호와 마찬가지 역할을 하기 때문에 공유하�
 AWS CLI를 사용하면 AWS 서비스의 공용 API로 직접 액세스가 가능하다. 또한 CLI를 통해 스크립트를 작성해서 일부 작업을 자동화할 수 있다.
 몇몇 고수들은 AWS Console 안 쓰고 cli만 사용하기도 한다.
 
+### 다중 계정에서 CLI 사용법
+
+터미널에서 `aws configure`을 작성하면 **AWS Access Key ID** 같은 **기본** 자격증명을 설정할 수 있다.
+만약 사용하는 AWS 계정이 여러개 있고, 이에 따른 자격증명을 저장하려면 어떻게해야할까?
+
+`aws configure --profile [프로필 이름]`과 같이 원하는 프로필 이름에 자격증명을 별도로 관리할 수 있다.
+
+또한 `aws s3 ls`와 같이 **S3**의 버킷을 나열할 수 있는 명령어도 뒤에 `--profile [프로필 이름]`을
+붙여서 해당 계정의 S3 버킷 리스트를 볼 수 있다.
+
+### MFA(다요소 인증) with CLI
+
+이전 [AWS IAM 및 CLI](https://ohsol-blog.vercel.app/blog/aws/aws-iam#aws-cli)에서 Management console에 이름과 비밀번호에 추가적으로 MFA를 적용할 수 있다는 것을 포스팅했었다.
+
+이번에는 CLI에도 MFA를 설정하는 방법이다.
+
+CLI에서 MFA를 사용하려면 임시 세션을 얻어야하고, API를 호출하기 위해선 **STS GetSessionToken**으로 얻은 토큰을 사용해야한다.
+토큰을 얻는 방법은 아래와 같다.
+
+```sh:GetSessionToken.sh
+// 문법
+aws sts get-session-token --serial-number [MFA 장치 시리얼 넘버] --token-code [MFA 장치로 얻은 코드] --duration-seconds 3600
+// 예시
+aws sts get-session-token \
+    --duration-seconds 900 \
+    --serial-number "YourMFADeviceSerialNumber" \
+    --token-code 123456
+
+// 요청 응답
+{
+    "Credentials": {
+        "AccessKeyId": "ASIAIOSFODNN7EXAMPLE",
+        "SecretAccessKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYzEXAMPLEKEY",
+        "SessionToken": "AQoEXAMPLEH4aoAH0gNCAPyJxz4BlCFFxWNE1OPTgk5TthT+FvwqnKwRcOIfrRh3c/LTo6UDdyJwOOvEVPvLXCrrrUtdnniCEXAMPLE/IvU1dYUg2RVAJBanLiHb4IgRmpRV3zrkuWJOgQs8IZZaIv2BXIa2R4OlgkBN9bkUDNCJiBeb/AXlzBBko7b15fjrBs2+cTQtpZ3CYWFXG8C5zqx37wnOE49mRl/+OtkIKGO7fAE",
+        "Expiration": "2020-05-19T18:06:10+00:00"
+    }
+}
+```
+
+MFA 장치 시리얼 넘버와 MFA를 통해 얻은 코드를 입력해서 토큰을 요청하면 **AccessKeyId**, **SecretAccessKey**, 그리고 **SessionToken** 와 같은 `임시적` 자격증명 데이터가 응답된다.
+이를 aws cli에 적용하기 위해 `.aws/credentials`에 AccessKeyId, SecretAccessKey, SessionToken을 입력한다.
+
 ### AWS SDK
 
 AWS Software Development Kit (AWS SDK)는 특정 언어로된 라이브러리의 집합. 따라서 언어에 따라 다른 라이브러리가 존재한다.
 CLI와 마찬가지로 AWS 서비스나 API에 프로그래밍을 위한 액세스가 가능하도록 한다.
+AWS SDK를 사용할 때 **주의할 점**은 별도로 **Region**을 지정하지 않으면 자동으로 `us-east-1`으로 설정되어 API를 호출한다.
+아래는 DynamoDB에 Lambda가 문서를 가져오는 예제 코드
+
+```mjs:getChat.mjs
+// 4_Remember_Chat - getChat
+import { DynamoDBClient, ScanCommand } from "@aws-sdk/client-dynamodb";
+const client = new DynamoDBClient({});
+
+export const handler = async function (event) {
+  try {
+    const command = new ScanCommand({
+      ProjectionExpression: "id, sender, #TXT, #TIME",
+      // 'text' is a reserved keyword
+      ExpressionAttributeNames: {
+        "#TXT": "text",
+        "#TIME": "timestamp",
+      },
+    });
+
+    const result = await client.send(command);
+    const items =
+      result.Items?.map((item) => {
+        return {
+          id: Number(item.id.N),
+          sender: item.sender.S,
+          text: item.text.S,
+          timestamp: Number(item.timestamp.N),
+        };
+      }) || [];
+    return done(null, items);
+  } catch (err) {
+    return done(err);
+  }
+};
+```
+
+## AWS Credentials Provider Chain
+
+### AWS CLI Credentials Provider Chain
+
+CLI로 API 호출할 때 자격증명 데이터를 요청한다. 그 때 찾는 과정은 다음과 같다.ㅇ
+아래 순서에 따라 우선순위가 나뉘어진다.
+
+1. **Command line options** : **--region**, **accessKeyId**와 같이 명령을 작성할 때 붙이는 **옵션**
+2. **Environment variables** : AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN과 같은 **환경변수**
+3. **CLI credentials file** : aws configure로 `~/.aws/credentials`에 작성한 cli 자격증명 파일에 작성된 정보
+4. **CLI config file** : aws configure로 `~/.aws/config`에 작성한 cli 자격증명 파일에 작성된 정보
+5. **Container credentials** : ECS 작업의 경우에는 컨테이너 자격 증명을 확인
+6. **Instance Profile credential** : EC2 인스턴스 프로파일 자격 증명을 확인
+
+### AWS SDK Default Credentials Provider Chain
+
+**Java SDK는 다음과 같은 순서로 자격증명을 확인한다.**
+
+1. **Java system properties**
+2. **Environment variables** : AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN -> CLI로 profile에 맞는 유저 권한 부여한 것
+3. **default credential profiles file** : 컴퓨터 전체에 적용되는 `~/.aws/credentials`, `~/.aws/config` 파일 -> 기본 profiles 권한
+4. **ECS Container credentials**
+5. **Instance Profile credential** : IAM Role로 설정한 권한
+
+중요한 점은 환경 변수가 여전히 우선시 되는데 이건 **EC2 인스턴스 프로파일** 자격 증명이다.
+
+### 사용사례
+
+EC2 인스턴스에서 애플리케이션을 배포하고 IAM 유저로 S3 API를 호출하는 상황. 이때 IAM 유저는 S3FullAccess 권한을 가지고 있다.
+또한 EC2는 한가지 S3에 접근할 수 있는 IAM 역할 및 EC2 인스턴스 프로파일을 정의하고 있다.
+
+EC2의 IAM 역할이 **Best practies**처럼 필요 최소 권한인 한 버킷에 권한만 가지고 있더라도 EC2는 모든 버킷에 액세스할 수 있다.
+그 이유는 **Credentials Provider Chain**에서 **인스턴스 프로파일**(사용자의 권한)이 존재이기 때문이다.
+
+위 문제를 해결하기 위해선 **환경변수** 설정을 해제하고 **인스턴스 프로파일**의 자격증명을 사용하도록 한다.
+
+### 모법 사용사례
+
+1. **무조건 자격증명을 코드에 사용하면 안된다.**
+2. AWS에서는 IAM 역할을 최대한 많이 사용해야한다. EC2 인스턴스에는 EC2 인스턴스 역할을, ECS task에는 ECS 역할을 **각각** 부여해야한다.
+3. 터미널에서 자격증명을 설정할때는 **환경변수**나 **named prodiles**를 사용해아한다.
 
 ## IAM 사용자와 그룹 생성법
 

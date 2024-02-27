@@ -19,18 +19,112 @@ summary: 'AWS IAM으로 역할 권한 설정하기'
 이번 포스팅의 목표는 `root` 계정을 사용하지 않고 **최소한** 역할을 가진 **EC2** 인스턴스가 **S3**에 접근해서 객체(이미지)를 얻을 수 있게
 설정하는 것이다.
 
-## IAM 종류
-
-IAM에는 3가지 종류가 있다.
-
-1. **IAM 권한** : 유저나 그룹이 **어떤 행위(ex: 그룹에 유저 추가, S3에 접근)**를 할 수 있는가?
-2. **IAM 정책** : 유저나 그룹의 권한을 정의하는 **문서**
-3. **IAM 역할** : 어떤 AWS 서비스가 **어떤 행위(ex: S3에 접근)**를 할 수 있는가?
-
-## IAM 역할
+## IAM Role
 
 AWS 서비스는 사용자 대신 **사용자의 계정**을 이용해 작업을 수행한다.
-그리고 이런 작업을 하려면 **권한**이 필요하다. 이를 위해 **IAM 역할**을 생성해야한다. 예를 들어 `EC2 Instance Roles`, `Lambda Function Roles` 등이 존재한다.
+그리고 이런 작업을 하려면 **권한**이 필요하다. 이를 위해 **IAM 역할**을 생성해야한다. 예를 들어 `EC2 Instance Roles`, `Lambda Function Roles`, 'Roles for CloudFormation' 등이 존재한다.
+
+## IAM Security Tools
+
+- IAM Credentials Report (계정 수준)
+  - 계정에 있는 다양한 사용자들의 다양한 자격 증명의 상태를 보여줌
+  - 계정 사용자들의 비밀번호 사용이나 MFA 사용 또는 access key 사용 같은 상태를 볼 수 있다.
+  - 보안적으로 어떤 유저를 주목해야하는지 알 수 있음
+- IAM Access Advisor (사용자 수준)
+  - 사용자에게 부여된 서비스 권한 확인
+  - 4시간 이내에 해당 서비스에 마지막으로 접속한 시간 확인 가능
+  - **최소 권한 원칙**을 적용할 때 도움되는 것이 어떤 권한이 사용되지 않는지 볼 수 있어 권한을 축소시킬 수 있다.
+
+<img alt="aws-iam-access-advisor" src="/static/images/aws/aws-iam-access-advisor.png" />
+
+위 그림을 보면 `최근 접속 시간`이 오늘인 서비스가 있는 반면, `추적 기간에 액세스되지 않음`인 서비스들이 있다. 이렇게 사용하지 않는 서비스들의 권한은 제거하는 것이 좋다!
+
+## IAM 가이드라인 & Best Practices
+
+1. **루트** 계정은 AWS 계정을 설정할 때를 제외하고 사용하지 않는다.
+2. One physical user = One AWS user
+3. 사용자를 **그룹**에 넣고, 그룹 수준으로 보안을 관리하자
+4. 비밀번호 정책을 강 화하고, **MFA**를 꼭 사용하자
+5. AWS 서비스에도 사용자처럼 제한된 **IAM Role**을 부여하자
+6. CLI나 SDK를 사용해서 AWS 서비스를 호출하는 프로그래밍을 할 때 꼭 **Access Key**를 사용하자
+7. 계정 권한을 감사할 때는 IAM Credentials Report와 IAM Access Advisor를 사용하자
+8. 절대로 IAM 유저와 access key를 공유하면 안된다.
+
+## IAM 정리
+
+1. User는 회사 내 실 사용자이며, aws console의 비밀번호를 가진다.
+2. Groups는 사용자들의 모임이며, 다른 그룹을 포함하면 안된다.
+3. IAM Policies는 User나 Groups의 IAM 정책을 설정하느 Json형식의 문서
+   - version과 statement로 구성
+   - statement는 다시 Sid, Effect, Action, Principal, Resource, 그리고 Condition으로 구성된다.
+4. Security를 위해서 MFA나 강력한 비밀번호 정책을 사용하자
+5. Access Key는 CLI나 SDK로 AWS 서비스에 접속할 때 사용한다.
+6. Audit(감사)할 때 IAM Credentials Report를 보거나 IAM Access Advisor를 참고할 수 있다.
+7. IAM 권한 원칙은 **최소 권한 부여**가 원칙이다.
+8. AWS Shared Responsibility Model
+   - AWS의 책임은 클라우드의 보안. 즉 인프라의 보안이다.
+   - 유저의 책임은 클라우드 안에서 보안. 즉 정책 설정과 비밀번호, access key 관리다.
+
+## IAM 공동 책인 모델
+
+AWS는 인프라 관리에 책임을 가지고 사용자는 인프라를 이용하는 부분에 관련해서 책임을 가진다.
+
+**AWS의 책임 대상**
+
+- 인프라, 글로벌 네트워크 보안
+- 설정이나 제공하는 서비스의 취약점 분석
+- 준수해야하는 법규
+
+**사용자의 책임 대상**
+
+- 직접 생성하는 사용자, 그룹, 역할, 정책, 그리고 모니터링
+- 모든 계정을 대상으로 MFA를 활성화시키는 것도 사용자 책임이다.
+- 주기적으로 키를 교체하는 것
+- IAM tools를 이용해 사용자에게 적절한 권한을 부여하는 것
+
+## EC2 Instance Metadata (IMDS)
+
+IAM Role 없이 EC2 자신에 대해 알 수 있는 방번. `http://169.254.169.254/lastest/meta-data` 와 같은 특정 url을 통해 EC2는 자기 자신에 대해 알 수 있다.
+메타 데이터를 통해 Public I, Private IP 등 심지어 **IAM 역할 이름**과 **자격증명 정보**(credential)도 **조회**할 수 있다. 하지만 **IAM 정책은 알 수 없다.**
+
+- Metadata : EC2 인스턴스의 정보
+- Userdata : EC2 인스턴스 실행 스크립트
+
+사용자들의 IAM 정책을 비교하기 위해선 `AWS Policy Simulator`에서 차이점을 이해할 수 있다.
+
+### 버전에 따른 변화
+
+1. IMDS V1 : url에 접근해서 바로 사용할 수 있다. (보안 약함)
+2. IMDS V2 : Metadata를 얻기위해 2가지 단계를 거쳐야한다.
+   - PUT 요청을 통해 Session Token을 얻어야한다.
+   - header에 token을 넣고 Metadata에 요청
+
+## AWS Limits (Quotas, 할당)
+
+**API Rate Limits**
+API 요청을 과다하게 하는 것을 막기위해 **API Limits**가 존재한다. 예를 들어 EC2에 API 호출은 초당 100회까지 가능하고 S3에 **GetObject**는 초당 5500GET이 가능하다.
+일시적인 에러에 대응하기 위해 **지수적 백오프**(Exponential Backoff)가 가능하다. 하지만, 지속적 에러일 경우 API 호출량이 많기 때문이라서 **API 제한 증가**를 요청해서 계속 사용하도록 한다.\
+**Service Limits(Quotas)**
+온디멘드 표준 인스턴스는 최대 1152개의 가상 CPU를 사용할 수 있으며, 더 많이 사용하고 싶을 때는 **opening a ticket**을 통해 서비스 한도 증가를 요청할 수 있고,
+**Service Quotas API**를 이용해서 프로그램에서 요청할 수 있다.
+
+### 지수적 백오프(Exponential Backoff)
+
+**지수적 백오프**가 발생하는 이유는 **조절 오류**가 발생한 경우이다. **조절 오류(ThrottlingException)** 는 단기간에 API 호출이 많아진 경우이다. 따라서 일시적인 오류의 원인은 보통 **조절 오류**이며, 그 답은 **지수적 백오프**이다.
+AWS SDK API를 사용하면 이미지 재시도 매커니즘은 적용되어 있다. 하지만 AWS API를 직접 사용한다면 개발자 자체의 **지수적 백오프** 로직을 추가해야한다.
+
+**지수적 백오프 원리**
+지수적 백오프는 동일한 요청을 성공할 때까지 **반복 요청**하고 요청과 요청 사이 **대기 시간**을 **지수적**으로 늘리는 것이다.
+예를 들어 1번째 요청이 실패하면 1초 기다리고 2번째 요청, 2번째 요청 실패하면 2초 기다리고, 3번째 요청 실패하면 4초 기다리고를 반복한다.
+대기시간을 점점 길게 가지기 때문에 서버의 부하는 줄어들고 **API 호출 제한**의 해결책이 된다.
+
+**지수적 백오프를 수행해야하는 경우**
+
+- 자체 SDK를 실행하는 경우
+- 자체 사용자 정의 HTTP 호출을 사용하는 경우
+- 5xx인 서버 에러가 발생하는 경우
+
+다만 4xx 같은 클라이언트 에러에서는 지수적 백오프를 실행해서는 안된다. 서버의 문제가 아닌 클라이언트가 잘못된 요청을 보낸 것이기 때문에 동일한 요청을 재시도하면 동일한 오류가 계속 발생할 것이다.
 
 ### IAM 역할 만들기
 
