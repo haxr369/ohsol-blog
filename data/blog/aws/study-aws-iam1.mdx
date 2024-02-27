@@ -1,8 +1,8 @@
 ---
-title: '[ASAC 주간 스터디] AWS IAM과 실습 1'
-date: 2023-11-25
-lastmod: 2023-11-25
-tags: ['AWS', 'IAM', 'ASAC-Weekly-Study']
+title: '[ASAC 주간 스터디] AWS IAM과 실습'
+date: 2024-02-28
+lastmod: 2024-02-28
+tags: ['AWS', 'IAM', 'CLI', 'SDK', 'ASAC-Weekly-Study']
 draft: false
 summary: 'AWS IAM으로 계정 권한 설정하기'
 ---
@@ -13,25 +13,136 @@ summary: 'AWS IAM으로 계정 권한 설정하기'
 
 이번 포스팅은 [ASAC 주간 스터디](tags/ASAC-Weekly-Study)로 [AWS IAM 및 CLI](/blog/aws/aws-iam)와
 [AWS CLI,SDK, IAM 역할 및 정책](https://ohsol-blog.vercel.app/blog/aws/aws-cli-sdk-iam)에서 배운 내용을
-실제 프로젝트에 적용할 수 있도록 사용법을 정리한다.
+실제 프로젝트에 적용할 수 있도록 개념과 사용법을 정리한다.
 
-이번 포스팅의 목표는 `root` 계정을 사용하지 않고 **최소한** 역할을 가진 **EC2** 인스턴스가 **S3**에 접근해서 객체(이미지)를 얻을 수 있게
-설정하는 것이다.
+## 주요 키워드
+
+iam user, iam policy, 최소권한원칙, iam policies inheritance, MFA, Secret access key,
+
+## IAM이란?
+
+Identity and Access Management(**IAM**)에서는 사용자를 생성하고 그룹에 배치하기 때문에 글로벌 서비스에 해당된다.
+계정을 생성하면 기본으로 주어지는 사용자가 **Root** 사용자다. **Root 사용자는 계정을 생성할 때만 사용돼야한다.**
+
+### IAM User란?
+
+한 **IAM User**는 조직 내의 한 사람에 해당된다. 또한 필요에 따라 User들을 그룹으로 묶을 수도 있다.
+**주의** 그룹은 오직 **IAM User**만 들어갈 수 있다. 그룹이 또 다른 그룹에 들어갈 순 없다.
+또한 한 IAM User가 **다수의 그룹**에 속할 수 있다.
 
 ## IAM 종류
 
 IAM에는 3가지 종류가 있다.
 
 1. **IAM 권한** : 유저나 그룹이 **어떤 행위(ex: 그룹에 유저 추가, S3에 접근)**를 할 수 있는가?
-2. **IAM 정책** : 유저나 그룹의 권한을 정의하는 **문서**
-3. **IAM 역할** : 어떤 AWS 서비스가 **어떤 행위(ex: S3에 접근)**를 할 수 있는가?
+2. **IAM 역할** : 어떤 AWS 서비스가 **어떤 행위(ex: S3에 접근)**를 할 수 있는가?
+3. **IAM 정책** : 유저나 그룹의 작업 권한을 정의하는 **json 문서**.
+   - EC2, CloudWatch, ELB는 이를 통해 사용자들이 AWS 서비스를 이용하도록 허용한다. 즉 **정책**들을 사용해 사용자들의 권한을 정의할 수 있게 된다.
+   - AWS는 **최소 권한의 원칙**을 적용한다. 사용자가 꼭 필요로하는 것 이상의 권한을 주지 않는 것.
+
+## IAM 정책
+
+IAM 정책을 그룹 레벨에 적용하면 정책이 그룹의 모든 구성원에게 적용되며 **정책의 상속**이 가능하다.
+만약 IAM 사용자가 어떤 그룹에 속해 있지 않는다면, 해당 사용자에게만 연결 가능한 인라인 정책을 생성할 수 있다.
+한 유저가 여러 그룹에 속해있어도 그룹들의 권한을 상속받는다.
+
+```json:iam-policy
+
+{
+  "Version": "2012-10-17", # 정책 버전 (필수)
+	"Id": "S3-Account-Permissions", # 정책 이름 (선택)
+  "Statement": [
+    {
+      "Sid": "FirstStatement",			# 문장 식별자 (선택)
+      "Effect": "Allow",				# 허가(Allow) 거부(Deny)
+			"Principal" : { # 정책이 적용될 사용자, 계정, or 역할
+				"AWS" :["arn:aws:iam::1234567865:root"]
+			},
+      "Action": ["iam:ChangePassword"],	# 문장이 적용되는 API 리스트
+      "Resource": "*"	# 적용 리소스, 이 경우에는 모든 리소스에 적용할 수 있다. 하지만, 실질적으로 ChangePassword API 작업 요청을 수행한 사용자의 암호에만 영향을 미친다.
+    },
+    {
+      "Sid": "SecondStatement",
+      "Effect": "Allow",
+      "Action": "s3:ListAllMyBuckets", # 사용자 자신의 버킷을 나열할 수 있다.
+      "Resource": "*"
+    },
+    {
+      "Sid": "ThirdStatement",
+      "Effect": "Allow",
+      "Action": [ # S3 버킷을 나열할 수 있는 API 사용가능. 단, 다른 계정의 리소스에 대한 액세스 권한을 부여하지 않으므로 사용자는 자신의 AWS 계정에 있는 버킷만 나열할 수 있다.
+        "s3:List*",
+        "s3:Get*"
+      ],
+      "Resource": [ # confidential-data라는 버킷과 객체를 다룸
+        "arn:aws:s3:::confidential-data",
+        "arn:aws:s3:::confidential-data/*"
+      ],	# 단, MFA 인증을 수행한 경우
+      "Condition": {"Bool": {"aws:MultiFactorAuthPresent": "true"}}
+    }
+  ]
+}
+
+```
+
+## IAM - Password Policy
+
+사용자들과 그룹의 정보가 침해당하지 않도록 보호하는 방법으로 **비밀번호 정책 정의**와 **MFA**
+
+**비밀번호 규칙**
+
+- 최소 길이
+- 특정 유형의 글자 타입 사용
+- IAM 사용자들의 비밀번호 변경 허용 또는 금지
+- 일정 기간이 지날 경우 비밀번호를 만료시켜 새 비밀번호 설정을 요구할 수 있다.
+- 이전에 사용한 비밀번호 사용 금지
+
+Multi Factor Authentication(**MFA**)
+
+AWS에서는 MFA를 필수적으로 사용하도록 권장한다. 사용자들은 계정으로 많은 작업을 할 수 있기 때문에 **Root** 계정은 무슨 일이 있어도 반드시 보호해야한다.
+그렇기에 MFA를 사용해야한다.
+
+MFA는 비밀번호와 security device를 함께 사용하는 것이다. 만약 사용자가 해킹당해 비밀번호가 유출됐더라도 사용자 소유의 물리적 장치가 추가로 필요하기 때문에 계정이 침해당하지 않는ㄴ다.
+
+1. Google Authenticator :(Virtual MFA device) 핸드폰에서만 사용가능
+2. Authy :(Virtual MFA device) 멀티 디바이스, 멀티 토큰 지원. 멀티 토큰은 한 장치에서 여러 계정의 인증을 수행할 수 있음을 의미한다.
+3. Universal 2nd Factor (U2F) Security Key : 물리적 usb. 하나의 보안키로 여러 계정 인증 가능
+4. Hardware Key Fob MFA Device
+5. Hardware Key Fob MFA Device for AWS GovCloud
+
+## AWS CLI
+
+### 다양한 aws에 접속하는 방법
+
+1. AWS Management Console : 이름 및 비밀번호 (+ MFA)로 인증
+2. AWS Command Lin Interface(CLI) : protected by access keys -> 터미널에서 aws 리소스에 접속할 때 사용
+3. AWS Software Developer Kit (SDK) : protected by access keys -> 애플리케이션에서 AWS의 API를 호출할 때 사용
+4. AWS Cloud Shell : 아직 제한된 regions만 이용 가능! 서울 region은 사용못한다. -> 클라우드로 동작하는 터미널 서비스, 그리고 파일 업로드 다운로드가 가능!
+
+access key는 AWS Console에서 생성될 수 있고, 사용자들이 자신들의 액세스 키를 직접 관리한다.
+따라서 **Access Key ID**는 username이고, **Secret Access Key**는 password라고 생각할 수 있다.
+access key는 비밀번호와 마찬가지 역할을 하기 때문에 공유하거나 잊어버리면 안된다.
+
+**절대로 access key를 공유해서는 안된다.**
+
+### AWS CLI
+
+AWS CLI를 사용하면 AWS 서비스의 공용 API로 직접 액세스가 가능하다. 또한 CLI를 통해 스크립트를 작성해서 일부 작업을 자동화할 수 있다.
+몇몇 고수들은 AWS Console 안 쓰고 cli만 사용하기도 한다.
+
+### AWS SDK
+
+AWS Software Development Kit (AWS SDK)는 특정 언어로된 라이브러리의 집합. 따라서 언어에 따라 다른 라이브러리가 존재한다.
+CLI와 마찬가지로 AWS 서비스나 API에 프로그래밍을 위한 액세스가 가능하도록 한다.
+
+## IAM 사용자와 그룹 생성법
 
 ### IAM 사용자 생성법
 
 aws 계정을 만들면, 모든 권한을 가진 `root` 계정이 생성된다. 하지만, 이 root 계정을 **직접** 사용하는 것은 위험하기 때문에
 **권한**이 설정된 **그룹**을 생성하고, 그 그룹에 유저를 추가해서 사용해야한다. 정리하면 아래와 같다.
 
-<img src="/static/images/study/study-iam-group-overview.png" alt="iam 그룹 실습 오버뷰" />
+<img src="/static/images/aws/study/Iam-group-overview.png" alt="iam 그룹 실습 오버뷰" />
 
 1. root 계정으로 IAM 대시보드
 
@@ -41,7 +152,7 @@ IAM은 글로벌 서비스기 때문에 region을 선택할 필요가 없다.
 
 2. IAM 유저 생성하기
 
-창업하고 첫 신입이 보안팀으로 입사했다. **보안팀의 권한**에 맞는 **IAM 유저**를 생성해서 제공할 수 있다.
+**IAM 유저**를 생성해서 제공할 수 있다.
 사용자 아래 숫자를 클릭하면 **사용자 대시보드**가 나온다.
 
 <img src="/static/images/study/study-iam-group-2.png" alt="IAM 사용자 생성하기1" />
@@ -60,7 +171,7 @@ IAM은 글로벌 서비스기 때문에 region을 선택할 필요가 없다.
 
 ### IAM 그룹 만들기
 
-**보안팀**인 당신은 곧 만들어질 개발팀을 위해 **개발팀1**과 **개발팀2** 그룹을 만들고 권한을 부여하려고 한다.
+**개발팀1**과 **개발팀2** 그룹을 만들고 권한을 부여하려고 한다.
 
 1. IAM 유저 로그인
 
@@ -129,3 +240,10 @@ https://533385215525.signin.aws.amazon.com/console
 ```
 
 <img src="/static/images/study/study-iam-group-9.png" alt="그룹 정책 정리" />
+
+### 엑세스 관리자를 통해 사용한 권한 확인하기
+
+그룹이 허용되는 서비스 중에 가장 최근 액세스 날짜를 확인할 수 있다. 클라우드 관리자는 이를 통해 그룹이 현재 필요한 권한을 확인할 수 있고,
+**최소권한원칙**을 위해 필요하지 않는 권한을 제거할 수 있다.
+
+<img src="/static/images/aws/study/Iam-group-access-menage.png" alt="그룹 엑세스 메니지" />
