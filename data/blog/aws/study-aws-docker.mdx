@@ -1,0 +1,318 @@
+---
+title: '[ASAC 주간 스터디] AWS에서 Docker'
+date: 2024-03-05
+lastmod: 2024-03-05
+tags: ['AWS', 'Docker', 'ECS', 'ECR', 'EKS', 'ASAC-Weekly-Study']
+draft: false
+summary: 'AWS에서 Docker 컨테이너로 서버 만들기'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## Docker란?
+
+도커는 앱 배포를 위한 소프트웨어 개발 플렛폼이다. **App**은 **Container**에 패키징 및 표준화되어 어떤 OS에서든 상관없이 실행될 수 있다.
+도커를 사용하는 사례로 **마이크로 서비스 아키텍쳐**가 있다.
+어떤 OS나 머신에도 동일한 실행을 보장하기 때문에 온프레미스에서 클라우드로 App을 lift-and-shift(리호스팅, 마이그래이션)하는데 사용할 수 있다.
+
+### Docker와 VM의 차이
+
+1. 도커 컨테이너는 리소스가 호스트와 공유되어 한 서버에서 다수의 컨테이너가 실행될 수 있다.
+2. 도커는 인프라, Host OS(EC2 인스턴스), Docker Daemon 그리고 Container인 구조를 가진다.
+   - 컨테이너는 OS 자원(시스템 콜)을 호스트와 공유하기 때문에 VM 보다 오버헤드가 적고, 각 컨테이너는 네트워크나 데이터를 공유할 수 있다.
+   - 컨테이너는 VM과 달리 하나의 OS 및 커널을 공유한다.
+   - VM 보다 덜 안전하지만, 더 많은 컨테이너를 실행할 수 있다.
+3. VM은 인프라, Host OS, Hypervisor, Guest OS(VM), 그리고 App인 구조를 가진다. - EC2의 원리
+   - 각 VM은 각자 분리되어 리소스를 공유하지 않는다.
+   - Hypervisor는 하드웨어 자체를 가상화해서 VM이 서로 물리적으로 구분되게 한다. 또한 각 VM들의 리소스 사용을 스케쥴링하고,
+     가상 머신과 하드웨어 간 I/O 명령을 처리하는 역할을 담당한다.
+
+도커는 초기 리눅스 컨테이너(LXC)를 기반으로 하여 리눅스에 종속됐지만,
+Docker 0.9 이후로 libcontainer를 사용하여 별도의 linux kernel api를 만들어 다양한 리눅스나 윈도우 환경을 제공한다.
+
+Docker는 자체적으로 개발한 **Containerd**로 이미지를 가져오고 컨테이너를 생성하고 App을 위해 격리 환경을 셋팅하는 등 컨테이너 라이프 사이클 관리한다.
+또한 Docker는 [OCI](https://github.com/opencontainers/runtime-spec)의 구현체인 **RunC**라는 컨테이너 런타임으로, 컨테이너를 생성하고 실행하는데 low-level interface를 제공한다.
+
+### 도커 이미지가 컨테이너가 되기까지 과정
+
+1. Dockerfile을 빌드해서 도커 이미지를 생성
+2. 도커 이미지를 push해서 도커 레포지토리에 저장
+3. 도커 레포지토리에서 pull해서 이미지를 가져온 후 실행
+
+### 도커 이미지가 저장되는 위치
+
+- Docker Repository
+
+  - **Docker Hub** : 퍼블릭 레포지토리
+  - **AWS ECR** : 프라이빗 레포지토리
+  - **AWS ECR Public Gallery** : 퍼블릭 레포지토리
+
+- Amazon ECS : 도커 관리를 위한 플랫폼
+- Amazon EKS : 쿠버네틱스 관리형 버전으로 오픈 소스 프로젝트다.
+- AWS Fargate : 서버리스 컨테이너 플랫폼, ECS와 EKS 둘 다 사용할 수 있다.
+- Amazon ECR : 프라이빗하게 컨테이너를 저장
+
+## Amazon ECS
+
+ECS는 Elastic Container Service이다. AWS에서 도커 컨테이너를 실행시키는 것은 **ECS Cluster**에서 **ECS Task**를 실행시키는 것이다.
+
+**ECS Cluster 타입 종류**
+
+1. EC2 Launch type
+   - EC2 인프라를 미리 프로비저닝하고 관리해야한다.
+   - 각 인스턴스는 ECS 에이전트를 실행해야한다. 에이전트는 Amazon ECS 서비스와 ECS Cluster에 EC2 인스턴스를 등록한다.
+   - 새로운 컨테이너를 Cluster에서 실행하면 각각 EC2 인스턴스에 자동으로 배치된다.
+2. **Fargate Launch type**
+   - AWS에서 도커 컨테이너를 실행하는 것은 똑같지만 인프라를 프로비저닝하지 않는다. - **서버리스!**
+   - Fargate에서 ECS Cluster를 사용하려면 ECS Task만 정의하면 AWS에서 요구사항을 토대로 CPU와 RAM을 할당해 태스크를 실행한다.
+   - 새로운 컨테이너를 실행하면 컨테이너의 실행 위치를 확인할 필요 없이 간단하게 실행할 수 있다.
+
+### IAM Roles for ECS
+
+**ECS 에이전트** : **EC2 인스턴스 프로필**
+
+EC2 Launch type 경우 **ECS 에이전트**만 사용하는 **EC2 인스턴스 프로필**을 생성할 수 있다.
+ECS 에이전트는 **EC2 인스턴스 프로필**을 이용해 ECS, CloudWatch, ECR에 API 호출을 보낸다.
+
+**ECS Task** : **ECS Task Role**
+
+EC2와 Fargate Launch type 둘 다 적용된다. 각 task 별로 구체적인 IAM Role을 부여할 수 있다.
+각 task가 AWS 서비스와 연결하기 위해 task role을 사용한다.
+각 Task Role 정의는 **ECS Service Task Definition**에 작성한다.
+
+### Load Balancer와 통합
+
+EC2와 Fargate Launch type 둘 다 적용된다. 여러 ECS Task가 모두 ECS Cluster에 포함되어 실행 중일 때,
+각 태스크를 http나 https 엔드포인트로 외부에 노출시키고 싶을 때 Cluster 앞에 ALB를 두면 사용자들은 ALB를 통해 task에 접근할 수 있다.
+
+## ECS의 Data volumes
+
+ECS Cluster는 EC2 Launch type과 Fargate Launch type이 있는데, 데이터 공유를 위해 ECS Task와 파일 시스템을 연결해야한다.
+**EFS**는 네트워크 파일 시스템이기 때문에 ECS의 파일 시스템과 바로 연동될 수 있다.
+**EFS**는 어떤 AZ에서든 실행 중인 Task가 데이터 공유가 가능하고 파일 시스템을 통해 서로 통신할 수 있다.
+
+**최고의 방법은 Fargate와 EFS를 함께 사용하는 것** 둘 다 서버리스 방식이기 때문에 서버를 관리할 필요 없이 사용량을 기반으로 청구되며
+물론 프로비저닝도 가능하다.
+
+EC2와 EFS를 사용하는 사례는 컨테이너에 **영구 다중 AZ 공유 스토리지**를 사용하는 것이다.
+
+**S3는 ECS Task에 파일 시스템으로 마운트 할 수 없다.**
+
+### Bind Mount - Side car
+
+도커에서 **바인드 마운트**란 호스트 시스템의 파일 또는 디렉토리가 컨테이너에 마운트되며 바인드 마운트된 컨테이너에서 파일을 수정하면 그대로 호스트 시스템에 적용된다.
+ECS Cluster에서는 종종 **사이드 카**라고 하는 보조 컨테이너가 로깅이나 지표를 다른 목적지로 보낼 수 있다.
+로깅을 위해선 Application 컨테이너와 Side car 컨테이너가 데이터를 공유해야하는데 이때 바인드 마운트 기술을 사용한다.
+바인드 마운트 기술은 EC2 Launch type과 Fargate Launch type 모두 사용 가능하다.
+
+Application 컨테이너에서 바인드 마운트한 **공유 스토리지**에 로그를 작성하면 Side car 컨테이너에서 그 파일을 읽을 수 있다.
+EC2 Launch type은 EC2 인스턴스 스토리지에서 바인드 탑재가 이뤄지기 때문에 데이터는 EC2 수명 주기동안에는 사용가능하다.
+Fargate Launch type 같은 경우는 임시 스토리지를 이용하고 데이터는 컨테이너의 수명에 연결된다.
+
+## ECS 테스크 정의
+
+Json 형식으로 정의되는 ECS Cluster에서 한개 또는 여러개의 도커 컨테이너를 실행시키는 방법을 정의.
+포함된 정보로는 이미지 이름, 호스트 머신과의 포트 번호 바인딩, 메모리와 CPU, 환경변수, 네트워크 정보, loggin 설정,그리고 **IAM Role**이 있다.
+
+예를 들어 아파치 서버를 돌리는 컨테이너인 경우, 인터넷과 HTTP 프로토콜 연결을 위해 80 포트를 통해 외부(호스트 머신)과 연결된다. 호스트 머신에서 인터넷으로 연결하기 위해선 포트(ex 8080)를 이용해야한다.
+이처럼 컨테이너의 포트와 호스트 머신의 포트를 연결하는 것을 포트 바인딩이라한다.
+
+**Task 당 10개의 컨테이너까지 정의할 수 있다.**
+
+**Task 당 하나의 IAM Role(ECS Task Role)을 가지고 있다.** Task 정의로 ECS 서비스를 생성할 때는 각 ECS Task가 ECS Task Role을 자동으로 추측해서 상속된다.
+중요한 점은 서비스 단위에서 Role이 정의되는 것이 아닌 Task 단위에 정의되는 것이다.
+**ECS Task에 대한 IAM Role 정의는 Task 정의 상에 가지고 있다.**
+
+### Task 환경 변수
+
+ECS Task는 환경 변수를 가질 수 있는데 아래 같은 방식으로 적용할 수 있다.
+
+1. 하드코딩 - Task 정의 내에 직접 작성. API 키나 DB pwd 같은 것은 부적절
+2. SSM Parameter Store - 민감한 환경 변수 저장
+3. Screts Manager - 민감한 환경 변수 저장
+4. S3 - 환경 변수 파일을 직접 저장. 이를 파일을 통한 Bluk 환경 변수 로딩이라한다.
+
+2,3번 방법은 ECS task를 시작할 때 ECS Task 정의 내에서 이들을 참조하고 값들을 가져와 런타임에서 값을 ECS Task 정의 내에 환경변수로 주입된다.
+
+### EC2 Launch type - 포트 바인딩
+
+오직 컨테이너 포트만 정의한 경우(호스트 포트 번호에 0으로 설정) **동적 호스트 포트 맵핑**을 적용하는데,
+각 컨테이너는 호스트 머신에서 사용 가능한 포트에 무작위로 바인딩한다. 그래서 외부와 컨테이너가 통신할 때는 EC2의 다양한 포트를 통해 연결하기 때문에 ALB와 연결할 때는 ALB의 SG에 대해 모든 포트를 열어놔야한다.
+
+**어? ALB는 컨테이너가 EC2의 어떤 포트와 바인딩 했는지 모르자나?**
+
+괜찮다. ECS 서비스가 ALB에게 컨테이너의 동적 바인딩 정보를 제공하기 때문에 각 컨테이너 마다 다른 포트에 ALB를 연결할 수 있다.
+
+### Fargate Launch type - 포트 바인딩
+
+Fargate는 각 ECS Task가 고유의 private IP를 가진다. 또한 호스트 머신이 없기 때문에 **컨테이너 포트**만 정의하면 된다.
+ECS Cluster 내부에서 각 Task(컨테이너)는 ENI를 통해 private IP를 가지는데, ENI는 모두 같은 80 포트를 사용한다.
+ALB와 연결할 때는 모든 Task(컨테이너)는 80포트로 연결하게 된다.
+
+**ECS ENI SG는 80포트를 ALB에 허용해야한다.** ALB는 80/443만을 허용하면 된다.
+
+## ECS Rolling Updates
+
+v1에서 v2로 업데이트할 때 Task들을 어떤 순서로 얼마나 많이 시작되고 중단될지를 제어한다.
+ECS에서 업데이트할 때 **Minimun healty percent**(최소 상태 퍼센트)와 **Maximum percent**(최대 퍼센트)오직 2가지만 설정한다.
+2가지 설정을 통해 백엔드 인스턴스가 전부 제거되지 않도록 **무중단 배포**를 가능하게 한다.
+
+**Minimun healty percent**(최소 상태 퍼센트)
+
+- V1에서 V2로 업데이트할 때 초기 인스턴스 수에서 꼭 살아남아야하는 V1의 퍼센트
+
+**Maximum percent**(최대 퍼센트)
+
+- V1에서 V2로 업데이트할 때 초기 인스턴스 수에서 V1과 V2의 인스턴스를 합친 인스턴스 수의 퍼센트
+- (100 - Minimun healty percent)% 만큼 V1 인스턴스를 제거, (150 - Minimun healty percent)% 만큼 V2 인스턴스를 생성한다.
+- 예를 들어 Max를 100%으로 Min을 50%로 설정하면 50%의 V1은 유지되고 나머지 50%는 제거되고 V2로 대체될 수 있다. 그리고 대체된 V2는 유지되고 나머지 50%의 V1은 제거되고 V2로 대체된다.
+- 예를 들어 Max 150% Min 100%라면 V1을 제거하지 않고 50%의 V2만 생성, 다시 50%의 V1 인스턴스 업데이트, 나머지 V1 인스턴스 제거.
+
+### EC2 Task Placement(테스크 배치)
+
+EC2 Launch type을 실행하면 EC2 인스턴스의 사용 가능한 메모리와 CPU 그리고 포트를 확인할 수 있다. 즉 여러 EC2 인스턴스가 존재하고 각 인스턴스에 여러 task(컨테이너)가 실행될 수 있다.
+
+만약 새로운 task(컨테이너)를 실행시키려면 어떤 EC2 인스턴스에 배치할지 정해야한다. 한편, task를 제거할 때도 어떤 인스턴스 안에 컨테이너를 제거할지도 정해야한다.
+어디서 추가되고 어디서 제거될지 정하는 배치는 **Task Placement strategies**나 **Task Placement constraints**로 정할 수 있다.
+
+**Fargate를 사용하면 AWS가 인스턴스를 관리하기 때문에 필요 없다.**
+
+### 배치 방법
+
+1. Task 정의에 적힌 CPU, RAM, 네트워크 포트 요구사항을 만족하는 인스턴스 식별
+2. Task Placement constraints 만족하는지 확인
+3. Task Placement strategies 만족하는지 확인
+4. 최종적으로 인스턴스를 선택하고 task를 배치
+
+### Task Placement strategies
+
+아래 전략들은 섞어서 사용할 수 있다. ex) spread(AZ) + binpack
+
+- **Binpack**
+
+  - 인스턴스 생성을 최소화하기 위한 전략 (비용 감소 전략)
+  - CPU 혹은 RAM을 가장 많이 사용하고 있는 인스턴스에 배치하려고함
+
+  ```json
+  "placementStrategy":[
+    {
+      "field":"memory", // RAM을 많이 사용하는 인스턴스에 배치
+      "type": "binpack"
+    }
+  ]
+  ```
+
+- **Random**
+
+  - 논리 없이 ECS Cluster 내부 인스턴스에 무작위로 배치
+
+  ```json
+  "placementStrategy":[
+    {
+      "type": "random"
+    }
+  ]
+  ```
+
+- **Spread** (분산)
+  - 특정 값을 기반으로 분산된 인스턴스에 task를 배치하는 전략
+  - 인스턴스 id나 AZ 같은 것을 기준으로 가질 수 있다.
+  ```json
+  "placementStrategy":[
+    {
+      "field":"attribute:ecs.availablabilty-zone",
+      "type": "spread"
+    }
+  ]
+  ```
+
+### Task Placement constraints
+
+- **distinctInstance**
+
+  - 동일 인스턴스에 동일 task를 배치할 수 없음
+
+  ```
+  "placementConstraints":[
+    {
+      "type":"distinctInstance"
+    }
+  ]
+  ```
+
+- **memberOf**
+  - `클러스터 쿼리`라는 언어를 만족하는 인스턴스 상에만 배치하는 제한
+  ```
+  "placementConstraints":[
+    {
+      // 인스턴스 유형이 t2만 가능
+      "expression":"attribute:ecs.instance-type =~ t2.*",
+      "type":"distinctInstance"
+    }
+  ]
+  ```
+
+## ECS 솔루션 아키텍쳐
+
+## ECR
+
+Elastic Container Repository는 AWS에 도커 이미지를 저장하는데 사용된다. Docker Hub에는 퍼블릭으로 이미지를 저장했다면,
+ECR에서는 프라이빗하게 이미지를 저장, 관리할 수 있다.
+**ECR**은 ECS와 완전히 연동되며 백그라운드에선 **이미지가 S3**에 저장된다.
+ECR은 이미지 저장 뿐만 아니라 이미지의 취약점 스케닝, 버저닝, 태그 및 수명 주기를 확인한다.
+
+ECS Cluster 내부 EC2 인스턴스가 ECR에서 이미지를 끌어오기 위해선 EC2 인스턴스에 IAM Role을 부여해야한다.
+**ECR의 이미지는 IAM으로 보호되고 있다.** 그렇기에 ECR에 권한 에러가 나타나면 IAM을 확인하면 좋다.
+
+## AWS Copilot
+
+컨테이너화된 production-ready Application을 빌드 및 릴리즈하고 배포하는데 사용되는 CLI tool이다.
+ECS나 Fargate를 실행하는 환경을 배포하려고 할 때 사용하면 인프라를 설정하는 대신 앱을 빌드하는데 집중할 수 있다.
+ECS, VPC, ELB, ECR 등과 같은 복잡한 인프라를 Copilot이 대신 준비해준다.
+또한 **CodePipeLine**과 연동하여 쉽게 자동으로 배포할 수 있다.
+
+1. CLI나 YAML 파일을 이용해서 마이크로서비스 아키텍처를 형성한다.
+2. Copilot CLI를 이용해 App을 컨테이너화하고 배포한다.
+3. 인프라를 자동으로 생성하고 ECS, Fargate를 실행시킬 수 있다.
+
+## Kubernetes????
+
+쿠버네틱스 클러스터를 구성하는 머신들은 **node**라고 불리는데 node는 물리적인 머신이거나 VM일 수 있다.
+노드에는 두가지가 존재한다.
+
+**Control Plane**을 형성하고 클러스터의 두뇌 역할을 하는 **마스터 노드**.
+**Data Plane**을 형성하고 파드(Pod)를 통해 실제 컨테이너 이미지를 작동시키는 **워커 노드**.
+
+Kubernetes에서 **객체**란 클러스터의 상태를 나타내는 단위(entities)로 Kubernetes는 항상 객체의 현재 상태를 **의도한 상태**와 동일하게끔 작동한다.
+
+- 어떤 파드(컨테이너)들이 어느 노드에서 동작(running) 중인지
+- 컨테이너들의 논리 그룹과 매핑된 IP 엔드포인트
+- 동작 중인 컨테이너 레플리카(replicas)의 개수
+
+### Kubernetes 용어 정리
+
+1. **Pod** : 하나 이상의 컨테이너를 둘러싼 가장 작은 단위
+2. **DaemonSet** : 워커 노드에 파드의 단일 인스턴스를 실행
+
+### AWS EKS
+
+Amazon Elastic Kubernetes Service는 관리형 Kubernetes를 AWS에서 시작하기위해 사용한다.
+**Kubernetes**는 주로 Docker App의 자동 배포, 스케일링 및 관리를 위한 오픈소스 시스템이다.
+ECS를 대체할 수 있는 시스템으로 컨테이너를 실행한다는 목적은 비슷하지만, 다른 API를 제공한다.
+또한 오픈소스기 때문에 많은 클라우드 제공자가 있어서 어느 정도 표준화가 되어 있다.
+이미 회사에서 Kubernetes를 사용하고 있다면 클라우드 전환할 때 사용할 수 있다.
+
+- EC2 배포
+
+  - Work node를 배포하고 싶다면 EC2를 사용
+  - 여러 AZ에 걸쳐서 한 VPC가 있고, 각 AZ에는 퍼블릭 서브넷과 프라이빗 서브넷이 있다.
+  - 각 서브넷에는 EC2 인스턴스인 워커 노드를 생성하고 각 노드는 EKS 포트에서 실행된다.
+
+- Fargate 배포
+
+## 참조
+
+- [AWS 사용자 모임 쿠버네틱스 워크샵](https://awskrug.github.io/eks-workshop/introduction/)
+- [Docker vs Containerd vs RunC](https://medium.com/@bibhup_mishra/docker-vs-containerd-vs-runc-c39ffd4156fb)
