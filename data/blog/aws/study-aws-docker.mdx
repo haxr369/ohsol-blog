@@ -2,7 +2,7 @@
 title: '[ASAC 주간 스터디] AWS에서 Docker'
 date: 2024-03-05
 lastmod: 2024-03-05
-tags: ['AWS', 'Docker', 'ECS', 'ECR', 'EKS', 'ASAC-Weekly-Study']
+tags: ['AWS', 'Docker', 'ECS', 'ECR', 'EKS', 'ASAC-Weekly-Study/ECS']
 draft: false
 summary: 'AWS에서 Docker 컨테이너로 서버 만들기'
 ---
@@ -153,6 +153,31 @@ ALB와 연결할 때는 모든 Task(컨테이너)는 80포트로 연결하게 �
 
 **ECS ENI SG는 80포트를 ALB에 허용해야한다.** ALB는 80/443만을 허용하면 된다.
 
+## ECS Service Auto Scaling
+
+ECS에서 인스턴스 수를 자동으로 조절하게 할 수 있다. ASG를 이용하는 건데 세 개의 지표에 대해 확장이 가능하다.
+다만, EC2 Launch type은 ECS Service Scaling(태스크 레벨)과 EC2 Auto Scaling(인스턴스 레벨)은 다르다.
+Fargate는 서버리스기 때문에 스케일링이 비교적 쉽다.
+
+1. **CPU 사용률**
+2. **메모리 사용률**
+3. ALB 관련 지표인 **타겟 당 요청 수**
+
+여러 auto-scaling 전략을 정할 수 있다.
+
+1. **target tracking** : CloudWatch가 특정 대상을 추적해서 스케일링
+2. **Step Scaling** : CloudWatch 알람이 발생하면 점진적으로 스케일링
+3. **Scheduled Scaling** : 미리 지정한 날짜와 시간에 스케일링
+
+**EC2 Launch type** 스케일링 주체
+
+- ASG Scaling
+  - CPU 사용량에 따라 ASG가 스케일링
+  - 시간에 지남에 따라 EC2 인스턴스를 추가
+- ECS Cluster Capacity Provider
+  - ECS task를 위해 자동으로 인스턴스를 예약하고 스케일링한다.
+  - 만약 task(컨테이너)를 추가고 생성하려고 할 때 인스턴스의 CPU나 RAM이 부족하면 인스턴스를 새롭게 생성한다.
+
 ## ECS Rolling Updates
 
 v1에서 v2로 업데이트할 때 Task들을 어떤 순서로 얼마나 많이 시작되고 중단될지를 제어한다.
@@ -254,8 +279,6 @@ EC2 Launch type을 실행하면 EC2 인스턴스의 사용 가능한 메모리�
   ]
   ```
 
-## ECS 솔루션 아키텍쳐
-
 ## ECR
 
 Elastic Container Repository는 AWS에 도커 이미지를 저장하는데 사용된다. Docker Hub에는 퍼블릭으로 이미지를 저장했다면,
@@ -295,6 +318,11 @@ Kubernetes에서 **객체**란 클러스터의 상태를 나타내는 단위(ent
 
 1. **Pod** : 하나 이상의 컨테이너를 둘러싼 가장 작은 단위
 2. **DaemonSet** : 워커 노드에 파드의 단일 인스턴스를 실행
+3. **Deployment** : 어플리케이션 버전의 롤아웃(또는 롤백) 방법
+4. **ReplicaSet** : 계속 동작할 파드의 개수 정의
+5. **Job** : 파드가 제대로 완성(completion)되어 동작할 수 있도록 함
+6. **Service** : 고정 IP 주소를 파드의 논리 그룹과 매핑
+7. **Label** : 연결(connection)과 필터링에 사용되는 키/벨류 쌍
 
 ### AWS EKS
 
@@ -304,13 +332,129 @@ ECS를 대체할 수 있는 시스템으로 컨테이너를 실행한다는 목�
 또한 오픈소스기 때문에 많은 클라우드 제공자가 있어서 어느 정도 표준화가 되어 있다.
 이미 회사에서 Kubernetes를 사용하고 있다면 클라우드 전환할 때 사용할 수 있다.
 
+### EKS 노드 종류
+
+- **Managed Node Groups**
+  - EC2 인스턴스(노드)를 생성 및 관리
+  - 각 노드는 auto-scaling group의 일부
+  - 온디멘트와 스팟 인스턴스를 지원한다.
+- **Self-Managed Node Groups**
+  - 노드를 직접 생성하고 EKS 클러스터에 등록한 다음 자체 노드를 ASG의 일부로 관리해한다.
+  - 사전 설치된 Amazon EKS 최적화 AMI를 사용할 수 있어 시간을 절약할 수 있다.
+  - 온디멘트와 스팟 인스턴스를 지원한다.
+- **Fargate Node Groups**
+  - 노드를 관리하지 않기 때문에 관리가 필요 없다. 단지 EKS에서 컨테이너를 실행시키면 된다.
+
+### EKS 아키텍처
+
 - EC2 배포
 
   - Work node를 배포하고 싶다면 EC2를 사용
   - 여러 AZ에 걸쳐서 한 VPC가 있고, 각 AZ에는 퍼블릭 서브넷과 프라이빗 서브넷이 있다.
-  - 각 서브넷에는 EC2 인스턴스인 워커 노드를 생성하고 각 노드는 EKS 포트에서 실행된다.
+  - 각 서브넷에는 EC2 인스턴스인 워커 노드를 생성하고 각 작업 노드는 EKS 포트에서 실행된다.
+  - 웹과 컨테이너가 통신하기 위해 프라이빗 또는 퍼블릭 로드밸런서를 설정할 수 있다.
+  - EC2 인스턴스들은 auto-scaling group으로 묶여서 스케일링이 가능하다.
 
 - Fargate 배포
+  - 클라우드 외부에 있는 로컬 시스템은 VPC 내부에 있는 Kubernetes 제어 플레인에 명령을 전송
+  - EKS는 Fargate 프로파일의 선택기를 기반으로 포드를 스케줄링
+  - Application Load Balancer는 Fargate 클러스터 노드의 Kubernetes 포드 간 트래픽을 나눔. 포드는 여러 AZ에 걸친 프라이빗 서브넷에 배포됨
+
+<img src="/static/images/aws/study/ECS/EKS-fargate.png" alt="eks 공식 아키텍처" />
+
+### EKS Data-volumes
+
+EKS 클러스터에 StorageClass 메니페스트를 설정해야한다.
+Container Storage interface(CSI)를 활용해야한다.
+시험을 위해선 Amazon EBS, EFS(work with Fargate)
+
+## ECS 만들어보기
+
+### ECS Cluster 만들기
+
+<img src="/static/images/aws/study/ECS/EKS-start-1.png" alt="eks 만들기" />
+<img src="/static/images/aws/study/ECS/EKS-start-2.png" alt="eks 만들기" />
+ASG 만드는 과정과 매우 유사하다. EC2의 OS와 인스턴스 유형 HTTPS에 대비해서 SSL 인증서까지 설정할 수
+있다.
+<img src="/static/images/aws/study/ECS/EKS-start-3.png" alt="eks 만들기" />
+네트워크 설정은 VPC와 인스턴스가 위치할 subnet을 설정한다.
+<img src="/static/images/aws/study/ECS/EKS-start-4.png" alt="eks 만들기" />
+
+아래 이미지들을 보면 ECS Clouster는 **Cloudformation**을 이용해서 인프라를 설정하고 EC2 Launch type은 **Auto-Scaling Group**을 이용해서 구현하는 것을 알 수 있다.
+
+<img src="/static/images/aws/study/ECS/ECS-start-5-asg.png" alt="eks 만들기" />
+<img src="/static/images/aws/study/ECS/ECS-start-6-cloudformation.png" alt="eks 만들기" />
+
+아래 이미지를 보면 3가지 종류의 인프라가 있는데 중간 `Fargate_Spot`은 EC2의 Spot 인스턴스 같은 것.
+마지막에 `ASGProvider`는 ASG를 통해 EC2 인스턴스를 클러스터로 보낼 수 있다는 것을 의미한다.
+ASG를 이용하는 것이기 때문에 AWS 콘솔에서 수동으로 EC2 인스턴스의 양을 조절할 수 있다.
+
+<img src="/static/images/aws/study/ECS/ECS-start-7-infra.png" alt="eks 만들기" />
+
+### ECS로 서비스 만들기
+
+ECS로 서비스를 만들기 전 **Task Definition**을 만들어야한다.
+
+<img src="/static/images/aws/study/ECS/ECS-start-8-task.png" alt="eks task 정의 만들기" />
+task로 컨테이너를 만들기 때문에 어떤 인프라 위헤 컨테이너를 만들지 선택해야한다.
+<img src="/static/images/aws/study/ECS/ECS-start-9-task.png" alt="eks task 정의 만들기" />
+컨테이너를 만들 이미지를 **Docker-hub**에서 가져오는 모습. 컨테이너 포트와 머신 포트를 어떻게 맵핑할
+것인지 설정할 수 있다. Fargate 같은 경우 그냥 **80**포트를 사용해도 괜찮지만, EC2에서 사용할 경우 여러
+컨테이너가 중복된 포트를 사용할 수 없기 때문에 동적 포트 맵핑이 필요하다. fargate와 EC2 유형 모두 사용할
+수 있다.
+
+또한 한 task에서 여러 컨테이너를 정의할 수 있는데 컨테이너에 **필수 컨테이너** 설정을 하면 해당 컨테이너가 어떤 이유로 제거될 때 모든 컨테이너가 중지되도록 한다.
+
+<img src="/static/images/aws/study/ECS/ECS-start-10-task.png" alt="eks task 정의 만들기" />
+<img src="/static/images/aws/study/ECS/ECS-start-11-task.png" alt="eks task 정의 만들기" />
+테스크 정의를 생성했으면 이 정의로 컨테이너를 생성할 수 있다. ECS 콘솔에서 방금 생성한 cluster에서
+**서비스 생성** 버튼을 누른다.
+<img src="/static/images/aws/study/ECS/ECS-start-12-task.png" alt="eks task 정의 만들기" />
+
+<img src="/static/images/aws/study/ECS/ECS-start-13-task.png" alt="eks task 정의 만들기" />
+**서비스**는 웹 서버처럼 긴 시간동안 동작할 필요가 있는 유형이고, **테스크**는 람다처럼 배치 작업을 수행하고
+사라지는 유형이다. 방금 전 생성한 서비스 이름을 입력하면 자동으로 연결된다.
+<img src="/static/images/aws/study/ECS/ECS-start-14-task.png" alt="eks task 정의 만들기" />
+ASG 만든 것처럼 VPC와 SG에 대한 네트워크 설정을 해줘야한다. 그리고 SG로는 인터넷 연결이 가능하도록 HTTP
+프로토콜에대해서 허용한다.
+<img src="/static/images/aws/study/ECS/ECS-start-15-task.png" alt="eks task 정의 만들기" />
+여러 task에 인터넷을 연결하려면 ALB로 **리버스 프록시**를 만들어야한다.
+<img src="/static/images/aws/study/ECS/ECS-start-16-task.png" alt="eks task 정의 만들기" />
+<img src="/static/images/aws/study/ECS/ECS-start-17-task.png" alt="eks task 정의 만들기" />
+ALB가 80포트에서 http 연결을 앞서 설정한 대상그룹으로 전달하는 것을 볼 수 있다.
+<img src="/static/images/aws/study/ECS/ECS-start-18-task.png" alt="eks task 정의 만들기" />
+<img src="/static/images/aws/study/ECS/ECS-start-19-task.png" alt="eks task 정의 만들기" />
+
+### 더 많은 task 만들어 보기
+
+task로 서비스 만들면 한개의 컨테이너를 생성한 것이다. 만약 3개의 task를 더 만들면? 여러 AZ에 걸처서 컨테이너가 생성되고 http 요청을 나눌 것이다.
+테스크 수를 1개에서 3개로 늘렸다.
+
+<img src="/static/images/aws/study/ECS/ECS-task-update-1.png" alt="eks task 업데이트하기" />
+아래 그림처럼 2개 태스크를 시작하는데 **최소 실행 작업 비율**과 **최대 실행 작업 비율**에 맞게 인스턴스를
+생성할 것이다.
+<img src="/static/images/aws/study/ECS/ECS-task-update-2.png" alt="eks task 업데이트하기" />
+<img src="/static/images/aws/study/ECS/ECS-task-update-3.png" alt="eks task 업데이트하기" />
+최종적으로 태스크를 만들면 아래처럼 실행중인 여러 태스크가 나타난다.
+<img src="/static/images/aws/study/ECS/ECS-task-update-4.png" alt="eks task 업데이트하기" />
+페이지를 새로고침하면 기존 프라이빗 ip 주소와 다른 주소가 나타나는 것을 확인할 수 있다. 이때
+새로고침 할 때마다 ip주소가 규칙적으로 바뀌는 것을 보아 ALB가 요청을 각 태스크에 순서대로 나누는
+것을 유추할 수 있다.
+<img src="/static/images/aws/study/ECS/ECS-task-update-5.png" alt="eks task 업데이트하기" />
+
+### Task를 더 자세히 알아보기
+
+**태스크 역할**은 컨테이너가 자동으로 IAM Role을 가져서 AWS 서비스에 API 호출을 할 수 있도록하는 권한을 설정한다.
+**Task Excution Role**은 IAM Role인데 task agent가 AWS API 요청을 대신하게한다.
+정리하면 **Task Excution Role**은 ECS 표준 Role에 가깝고, **태스트 역할**이 실질적으로 ECS 작업을 위해 사용하는 Role이다.
+
+<img src="/static/images/aws/study/ECS/ECS-task-update-6.png" alt="eks task 업데이트하기" />
+
+컨테이너가 DB에 접속하고 싶을 때 DB password를 어떻게 저장할 것인가도 중요하다. 이때 ECS 환경변수를 사용할 수 있다.
+환경변수는 직접 설정에서 하드코딩도 가능하고 secreat manager의 ARN을 추가하거나 SSM 파라미터 스토어를 사용할 수 있다.
+또한 파일을 이용할 수 있는데 S3 객체를 사용할 수 있다.
+
+<img src="/static/images/aws/study/ECS/ECS-task-update-7.png" alt="eks task 업데이트하기" />
 
 ## 참조
 
