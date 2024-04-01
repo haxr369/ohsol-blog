@@ -11,4 +11,97 @@ summary: 'Spring의 비동기 처리를 위한 Async 어노테이션 사용해�
 
 <TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
 
-## Spring Async를 사용하는 이유?
+## Spring Async를 사용하는 이유
+
+Spring에서 `@Async` 어노테이션만 붙여도 비동기 실행을 지원한다.
+기존 스레드에서 `@Async`가 붙은 메서드를 실행하면 새로운 **스레드**를 생성하고 거기서 메서드를 실행한다.
+사용사례로는 배열 안에 서로 독립적인 요소들에 대해서 반복적인 작업을 멀티쓰레드 동기 방식으로 수행해서 실행 시간을 줄이는 경우가 있을 것 같다.
+
+## 비동기 처리를 가능하게 하는 방법
+
+```java
+@SpringBootApplication
+@EnableAsync // 비동기 처리 가능하도록 하는 설정 어노테이션
+public class SpringThreadConcurrencyApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(SpringThreadConcurrencyApplication.class, args);
+    }
+    @Bean
+    public Executor taskExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor(); // Spring에서 사용하는 스레드를 제어한느 설정
+        executor.setCorePoolSize(50); // thread-pool에 살아있는 thread의 개수
+        executor.setMaxPoolSize(50);  // thread-pool에서 사용할 수 있는 최대 개수
+        executor.setQueueCapacity(500); //thread-pool에 최대 BlockingQueue 크기
+        executor.setThreadNamePrefix("AsyncApp-");
+        executor.initialize();
+        return executor;
+    }
+}
+```
+
+## @Async 사용법
+
+`@Async`를 위해 몇가지 규칙이 있다.
+
+1. 무조건 `public` 메서드에 적용 : 프록시를 만드는 어노테이션은 `public` 클래스나 메서드에 적용할 수 있기 때문이다.
+2. 자체 호출(재귀)에는 적용할 수 없다. : 자체 호출은 프록시를 호출하는 것이 아니라 메서드를 직접 호출하기 때문이다.
+
+### String type을 반환하는 메서드
+
+```java
+@Service
+public class AsyncService {
+    @Async
+    public CompletableFuture<String> voidParamStringReturn (long waitTime, String message)
+            throws InterruptedException{
+        System.out.println("비동기적으로 실행 - "+
+            Thread.currentThread().getName());
+        Thread.sleep(waitTime);
+        return CompletableFuture.completedFuture(message);
+    }
+}
+```
+
+위처럼 단순히 입력 받은 message만 출력하는 비동기 메서드를 작성했다.
+**Spring 6.0** 이전 버전은 `Future` 인터페이스를 구현한 `AsyncResult`를 반환 타입으로 사용했지만,
+**Spring 6.0**부터 deprecated 돼서 `CompletableFuture`를 사용한다.
+
+### 비동기 함수 호출 예제
+
+[Async 메서드 테스트](https://github.com/haxr369/spring-concurrency-thread/blob/main/src/test/java/com/thread/concurrency/AsyncServiceTest.java)에 전체 코드가 있다.
+
+```java
+@Test
+@DisplayName("입력은 void 출력은 String인 비동기 함수 다중 호출")
+public void testGetMultiString() throws InterruptedException {
+    List<CompletableFuture<String>> hellos = new ArrayList<>();
+    for(int i=0; i<100; i++){
+        hellos.add(asyncService.voidParamStringReturn(1000,i+"번째 메세지"));
+    }
+    // 모든 비동기 호출이 완료될 때까지 대기하고 결과를 리스트에 넣기
+    List<String> results = hellos.stream().map(CompletableFuture::join)
+            .toList();
+    results.forEach(logger::info);
+}
+```
+
+간단한 Unit Test를 위해 위처럼 테스트 코드를 작성했다.
+비동기 함수를 호출하면 `CompletableFuture<>` 타입의 객체를 응답받고 이를 `get`을 통해 결과를 받을 때까지 blocked 상태로 기다리고 결과를 반환한다.
+`testGetMultiString`을 실행시킬 때 `voidParamStringReturn`가 동기로 동작한다면 **100초**가 걸릴 것이다.
+하지만, 앞서 쓰레드 풀에 **50**개를 설정했기 때문에 약 2초만에 수행된다.
+
+만약 비동기 메서드의 실행시간이 예상 보다 너무 길다면 어떻게 할까?
+메서드를 `supplyAsync`로 비동기 호출을 하고 **time out** 시간을 지정, 그리고 blocking으로 비동기 호출 결과를 기다리다가 예외가 발생하는 것을 확인할 수 있다.
+
+```java
+@Test
+@DisplayName("입력은 void 출력은 String인 비동기 함수 단일 호출 타임아웃 발생.")
+public void testGetStringTimeOutIsThisAsync() throws InterruptedException {
+    // voidParamStringReturn가 비동기 메서드인지 의문이 생김.
+    CompletableFuture<String> completableFuture = asyncService.voidParamStringReturn(4000, "타임아웃 발생 안 함!");
+    long timeOutValue = 1;
+    TimeUnit timeUnit = TimeUnit.SECONDS;
+    // 1초가 지난 후 타임아웃 발생
+    Assertions.assertThrows(ExecutionException.class, () -> completableFuture.orTimeout(timeOutValue,timeUnit).get());
+}
+```
