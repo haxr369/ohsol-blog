@@ -1,0 +1,129 @@
+---
+title: '[ASAC 스터디] 운영체제 1'
+date: 2024-04-01
+lastmod: 2024-04-01
+tags: ['CS', 'OS']
+draft: false
+summary: '운영체제 CS 정리'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+ASAC CS 면접 준비 스터디를 하면서 정리하는 글입니다.
+
+### 프로세스와 스레드의 차이를 설명해보세요.
+
+- 프로세스와 스레드의 차이 [[답]](https://www.geeksforgeeks.org/difference-between-process-and-thread/)
+
+```
+프로세스는 Ready 상태에서 dispatch되어 CPU가 스케줄링하는 프로그램입니다.
+프로세스는 자녀 프로세스를 생성할 수 있고, 다른 프로세스와 메모리를 공유하지 않아서 격리되어 있습니다.
+또한 프로세스는 5가지 상태를 가질 수 있습니다.
+New (create), Ready, Run, Blocked or Wait, 그리고 Terminated or Completed
+
+스레드는 프로세스의 한 부분입니다. 따라서 한 프로세스 안에 여러 스레드가 있을 수 있습니다.
+스레드는 code, data, 그리고 자원을 다른 스레드와 공유합니다.
+스레드는 3가지 상태를 가질 수 있습니다. Running, Ready, and Blocked
+
+----차이점----
+
+스레드는 생성과 제거에 있어서 프로세스 보다 더 적은 시간이 걸립니다. 다만, 프로세스와 달리 스레드는 격리되지 못합니다.
+
+CPU 스케쥴링에 따라 실행 중인 프로그램이 프로세스기 때문에 멀티 프로그래밍은 멀티 프로세스와 같은 말이다.
+다만, 한 프로그램(프로세스) 안에 멀티 스레드가 있을 수 있다.
+
+한 프로세스가 blocked해도 다른 프로세스 상태에 영향을 주지 않습니다.
+user-level 스레드 같은 경우 한 스레드가 I/O로 인한 blocked가 전체 스레드를 blocked하게 합니다.
+다만 kernel-level 스레드는 user-level 스레드처럼 전파되지 않습니다.
+
+마지막으로 프로세스는 고유의 Process Control Block(PCB), Stack, Address 공간을 가집니다.
+스레드는 부모의 PCB, Thread Control Block, Stack, 그리고 공통 Address 공간을 갑니다.
+```
+
+- 스레드끼리 공유하는 자원과 공유하지 않는 자원은 어떤게 있을까요? [[답]](https://www.baeldung.com/cs/threads-sharing-resources)
+
+```
+스레드는 보통 lightweight process라고 불립니다.
+
+프로세스의 메모리 맵은 다음과 같이 5개의 요소로 나눌 수 있습니다.
+stack : 프로세스는 stack 영역을 나누고 각각을 스레드에게 제공합니다.
+  호출된 함수의 인자, 지역 변수, return memory address을 저장합니다.
+  스레드가 작업을 완료하면 해당 스레드의 스택 영역이 프로세스에 의해 회수됩니다.- 독립적
+heap : 동적으로 할당된 변수를 저장하기 위해 예약됩니다.
+  이는 프로세스의 가상 address 공간 상에서 스택 영역 반대에 위치해 있습니다. - 공유
+text (code) : 실행할 명령어를 저장합니다. - 공유
+initialized data : 초기화된 전역 또는 정적 변수를 저장합니다. - 공유
+uninitialized data : 초기화되지 않는 전역 또는 정적 변수를 저장합니다. - 공유
+
+스레드는 code(text), data(initialized, uninitialized data), 그리고 file 영역은 공유하고,
+stack pointer, instruction pointer, stack, 그리고 registers는 독립적입니다.
+
+멀티스레드를 하면 이점은 OS가 새로운 스레드를 생성할 때 새로운 메모리 맵을 만들지 않고,
+이미 존재하는 프로세스의 메모리 맵을 스레드가 사용할 수 있다.
+다만, 멀티스레드가 공유하는 자원을 안전한 방법으로 일관된 상태를 유지해야합니다.
+```
+
+- 프로세스끼리 어떻게 소통할 수 있을까요? [[답]](https://en.wikipedia.org/wiki/Inter-process_communication)
+
+### 컨텍스트 스위칭에 대해 설명해보세요.
+
+- 컨텍스트 스위칭 [[답]](https://www.geeksforgeeks.org/context-switch-in-operating-system/)
+
+### 동기와 비동기의 차이, 블로킹과 넌블로킹의 차이 그리고 장단점에 대해 설명해보세요.
+
+- 블로킹과 넌블로킹 차이 [[답]](https://nodejs.org/en/learn/asynchronous-work/overview-of-blocking-vs-non-blocking)
+- 동기와 비동기 차이 [[답]](https://www.ibm.com/docs/en/aix/7.2?topic=concepts-asynchronous-io-subsystem)
+  ![Untitled](https://prod-files-secure.s3.us-west-2.amazonaws.com/351dfbb5-e326-408c-b913-3a27ed28fe2f/2d9b6106-65db-4552-b808-71cb14a1c1cf/Untitled.png)
+  ![Untitled](https://prod-files-secure.s3.us-west-2.amazonaws.com/351dfbb5-e326-408c-b913-3a27ed28fe2f/41ce37bc-44e1-42ec-b666-3e111b7277b4/Untitled.png)
+
+### 멀티스레드 프로그래밍에 대해 설명해보세요.
+
+[[답]](https://www.geeksforgeeks.org/multithreading-in-operating-system/)
+
+### Thread-safe 하다는 의미와 설계하는 법을 설명해보세요.
+
+[[답]](https://www.baeldung.com/java-thread-safety)
+
+### 프로세스 동기화에 대해 설명해보세요.
+
+[[답]](https://www.geeksforgeeks.org/introduction-of-process-synchronization/)
+
+### 교착상태와 기아상태의 해결방법에 대해 설명해보세요.
+
+[[답]](https://www.geeksforgeeks.org/difference-between-deadlock-and-starvation-in-os/)
+
+### 세마포어와 뮤텍스의 차이에 대해 설명해보세요.
+
+[[답]](https://www.geeksforgeeks.org/mutex-vs-semaphore/)
+
+### 메모리의 구조에 대해 설명해보세요.
+
+[[답]](https://tcpschool.com/c/c_memory_structure)
+
+### 함수 호출에 관련된 스택 프레임에 대해 설명해보세요.
+
+[[답]](https://tcpschool.com/c/c_memory_stackframe)
+
+### 가상 메모리에 대해 설명해보세요.
+
+[[답]](https://www.techtarget.com/searchstorage/definition/virtual-memory)
+
+### 캐시의 지역성에 대해 설명해보세요.
+
+- [[답]](https://www.geeksforgeeks.org/locality-of-reference-and-cache-operation-in-cache-memory/)
+
+### 프로세스 관련 용어를 설명해보세요. (알아만 둡시다.)
+
+```java
+PCB: 프로세스 제어 블록, 프로세스에 대한 중요한 정보를 저장합니다.
+
+PC: 프로그램 카운터, 프로세스 실행을 위한 다음 명령의 주소를 표시합니다.
+
+캐시메모리: 자주 사용되는 데이터가 저장되는 공간으로 CPU의 레지스터와 메모리 사이에서 병목 현상을 완화하는 장치입니다.
+```
+
+### CISC와 RISC의 차이 (전공자라면 받는 질문.. ㅠㅠ)
+
+[[참고]](https://www.guru99.com/ko/risc-vs-cisc-differences.html)
