@@ -1,0 +1,278 @@
+---
+title: Blocking Queue를 이용해서 Producer-Consumer 패턴 구현하기
+date: 2024-04-02
+lastmod: 2024-04-02
+tags: ['java', 'concurrency', 'BlockingQueue', 'producer-consumer', 'AtomicInteger']
+draft: false
+summary: 'Blocking Queue를 이용해서 Producer-Consumer 패턴 구현하고 멀티 쓰레드 상황에서 실행시키기'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 소개
+
+서로 다른 두 컴포넌트가 강하게 결합될 때, 한 컴포넌트의 예외가 다른 컴포넌트로 전달될 수 있다.
+두 컴포넌트의 결합을 느슨하게 하는 방법 중 하나로 producer-consumer 패턴을 이용할 수 있다.
+`producer`는 데이터나 이벤트를 **생성**하고 `consumer`는 생성된 데이터나 이벤트를 **처리**한다.
+
+### producer-consumer 패턴 문제점
+
+Producer-Consumer는 멀티스레드 환경에서 동기화 관점에서 문제가 발생한다.
+멀티스레드가 동시에 데이터를 생성하고 버퍼(메세지 큐)에 저장한다.
+또 멀티스레드가 동시에 데이터를 버퍼에서 떠내 사용한다.
+
+몇가지 위험한 시나리오가 있는데 첫번째로 버퍼에 저장할 때 발생한다. 버퍼가 스레드 안전하지 않다면, producer 스레드들의 데이터 쓰기가 동시에 이뤄지다 보면
+[스테일 데이터](http://w3devlabs.net/wp/?p=10629)를 큐에서 읽고 이를 바탕으로 업데이트하기 때문에 제대로 데이터가 저장되지 않는 경우가 있을 수 있다.
+또는 consumer 스레드들이 데이터를 동시에 읽는다면 스테일 데이터를 읽어서 똑같은 작업을 두번하게 되는 일이 발생할 수 있다.
+
+이처럼 동시성의 흔한 문제점을 가지고 있다.
+
+### producer-consumer 패턴을 왜 써요?
+
+가장 큰 장점은 **확장성**에 있다. 메세지 큐만 버틸 수 있다면, producer와 consumer를 계속 늘릴 수 있고,
+이 말은 이벤트 생성 속도와 이벤트 처리 속도를 늘릴 수 있다는 것이다.
+또한 큰 장점은 **내결함성**이다. 메세지 큐를 사이에 두고 producer와 consumer가 분리되어 있어서
+producer와 consumer를 교체하거나 재시작할 수 있어서 내결함성을 허용한다.
+
+### 실생활에 쓰이는 예시
+
+1. Web Server (Nginx)
+2. Message Queue (AWS SQS)
+3. Data Processing
+
+## 간단한 구현 예시 - 카운터
+
+카운터 예제는 흔한 동시성 예제로 등장한다. 책에선 데스크탑 검색 예제가 있지만, [Spring 템플릿 프로젝트](https://github.com/spring-templates)의 시나리오인 카운터를 위해 구현해본다.
+구성은 producer가 카운팅 이벤트를 `Blocking Queue`에 저장하면, consumer가 `Blocking Queue`에 이벤트를 읽고 카운팅을 하는 구조다.
+
+### 브로커와 이벤트 정의
+
+가장 먼저 Blocking Queue에 들어갈 이벤트 클래스를 만들어 준다.
+이를 위해 java8부터 가능한 함수형 인터페이스를 이용해 일급함수를 Queue에 저장하려고 한다.
+요구사항은 기존 카운트 값에 int 값을 더해 카운트 값을 업데이트하는 것이기 때문에 `Function`을 사용한다.
+
+`BlockingQueue`를 관리하는 브로커를 아래처럼 작성했다.
+
+```java
+public class CounterBroker {
+    // 최대 1000개의 이벤트를 저장할 수 있다.
+    private final BlockingQueue<Function<Integer, Integer>> queue = new LinkedBlockingQueue<>(1000);
+
+    public void addEvent(int value){
+        try{
+            // 이 이벤트를 컨슈머가 처리할 당시 count와 value를 더한 값을 출력한다.
+            queue.put((c) -> c+value);
+        }
+        catch(InterruptedException e){
+            Thread.currentThread().interrupt();
+        }
+    }
+    public Function<Integer, Integer> take(){
+        try {
+            return queue.take();
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+    }
+}
+```
+
+### 프로듀서 정의
+
+프로듀서는 브로커에게 이벤트를 입력해달라고 요청한다.
+
+```java
+public class CounterProducer {
+    private final CounterBroker counterBroker;
+
+    public CounterProducer(CounterBroker counterBroker) {
+        this.counterBroker = counterBroker;
+    }
+
+    public void add(int value){
+        counterBroker.addEvent(value);
+    }
+}
+```
+
+### 컨슈머 정의 - 1차
+
+컨슈머는 카운터를 관리하며 이벤트를 큐에서 가져와서 카운터를 업데이트한다.
+컨슈머는 while 문을 돌면서 큐에 이벤트가 있는지 확인하고 있을 때까지 대기하다가
+이벤트가 생기면 뽑아와서 덧셈 연산을 한다.
+
+```java
+public class CounterCustomer {
+    private final CounterBroker counterBroker;
+    private AtomicInteger count = new AtomicInteger(100); // AtomicInteger로 변경
+
+    public CounterCustomer(CounterBroker counterBroker) {
+        this.counterBroker = counterBroker;
+    }
+
+    public void consumEvent(){
+        while(true){
+            Function<Integer,Integer> event = counterBroker.take();
+            IntUnaryOperator operator = event::apply;
+            count.updateAndGet(operator); // 원자적인 연산 보장하기 위함
+        }
+    }
+    public int show(){ // 스레드 안전하게 카운트 결과를 출력한다.
+        // AtomicInteger의 get 메서드를 사용하여 값을 가져옴
+        return count.get();
+    }
+}
+```
+
+단순하게 생각하면 카운터를 `AtomicInteger` 타입을 사용했으니 스레드 안전하겠지만, 아래 테스트 결과를 보면 알겠지만 실패한다.
+그 이유는 2차에서 자세히 다루겠다.
+
+### 테스트
+
+테스트는 3개의 컨슈머 스레드 그리고 최대 15개의 프로듀서 스레드가 실행되어 `10000`개의 이벤트를 생성 및 처리한다.
+
+```java
+public class QueueCounterTest {
+    private final int counteNumber = 1;
+    private final int totalCount = 10000;
+    private static final Logger logger = LoggerFactory.getLogger(SynchronizedCounterTest.class);
+    @Test
+    @DisplayName("producer consumer 패턴을 이용해서 더하기 이벤트 발생 스레드와 더하기 이벤트 처리 스레드를 분리하자")
+    public void 프로듀서_컨슈며_더하기_멀티_프로듀서_멀티_컨슈머() throws InterruptedException {
+        CounterBroker counterBroker = new CounterBroker();
+        CounterCustomer customer = new CounterCustomer(counterBroker);
+        CounterProducer producer = new CounterProducer(counterBroker);
+        LocalTime lt1 = LocalTime.now();
+
+        int initalCount = customer.show();
+        ExecutorService service = Executors.newFixedThreadPool(15);
+        CountDownLatch latch = new CountDownLatch(totalCount);
+        // CounterCustomer 스레드 생성 및 비동기로 처리 시작
+        for(int i=0; i<3; i++){
+            CompletableFuture.runAsync(customer::consumEvent);
+        }
+        // 프로듀서 스레드 생성
+        for (int i = 0; i < totalCount; i++) {
+            service.submit(() -> {
+                producer.add(counteNumber);
+                latch.countDown();
+            });
+        }
+        latch.await();
+        int finalCount = customer.show();
+
+        LocalTime lt2 = LocalTime.now();
+        long dif = Duration.between(lt1, lt2).getNano();
+        logger.info("프로듀서_컨슈며_더하기_멀티_프로듀서_단일_컨슈머 테스트가 걸린 시간 : " + dif / 1000 + "ms");
+        Assertions.assertEquals(initalCount + totalCount*counteNumber, finalCount);
+    }
+}
+```
+
+```:테스트 실행 결과
+expected: <10100> but was: <10096>
+	...
+	at com.thread.concurrency.counter.QueueCounterTest.프로듀서_컨슈며_더하기_멀티_프로듀서_멀티_컨슈머(QueueCounterTest.java:53)
+```
+
+## 여러 연산에 있어서 단일 스레드 안전성
+
+앞선 테스트 결과가 실패한 이유는 [producer-consumer-패턴의 문제점](#producer-consumer-패턴-문제점) 때문에 발생한다.
+프로듀서끼리와 컨슈머끼리 공유하는 `BlockingQueue`는 스레드에 안전하지만, 컨슈머끼리 공유하는 `count`는 스레드에 안전하지 않았던 것이다.
+
+분명 `AtomicInteger`는 스레드에 안전하다고 생각했는데 왜 그럴까?
+
+[책 57p](#참고)에 나와있듯이 아래 내용을 **컨슈머**가 충족시키지 않은 것이다.
+
+> 상태를 일관성 있게 유지하려면 관련 있는 변수들을 하나의 단일 연산으로 갱신해야 한다.
+
+컨슈머는 아래 두가지 변수를 연관지어서 동작한다.
+
+```java:CounterCustomer
+...
+private final CounterBroker counterBroker;
+private AtomicInteger count = new AtomicInteger(100); // AtomicInteger로 변경
+...
+```
+
+`counterBroker`와 `count`는 `최신의 count를 읽어 counterBroker의 마지막 event를 처리한다.`라는 불변 조건으로 묶여있고,
+여러 개의 변수가 하나의 불변조건을 구성하고 있다면, 이 변수들은 독립적이지 않다.
+따라서 변수 하나를 갱신할 때, 다른 변수도 동일한 단일 연산 작업 내에서 함께 변경해야 한다.
+
+책에서 연관된 여러 변수를 단일 연산 작업 내에서 변경하는 방법을 암묵적락을 통해 해결할 수 있다고 소개한다.
+
+### 암묵적인 락 - synchronized
+
+`synchronized` 구문은 락으로 사용될 객체의 참조 값과 해당 락으로 보호하려는 코드 블록으로 구성된다.
+
+```
+synchronized(lock){
+  // lock으로 보호된 공유 상태에 접근하거나 해당 상태를 수정할 수 있다.
+}
+```
+
+위처럼 자바에 내장된 락을 암묵적인 락 혹은 모니터 락이라고 한다. 락은 스레드가 `synchronized` 블록으로 들어가기 전에 자동으로
+확보되며 정상적으로든 예외가 발생해서든 해당 블록을 벗어날 때 자동으로 해제된다.
+
+또한 자바에서 암묵적인 락은 **뮤텍스**(mutexes)로 동작한다. 즉 한 번에 한 스레드만 특정 락을 소유할 수 있다.
+만약 스레드 B가 락을 놓지 않으면 스레드 A는 영원히 기다릴 수밖에 없다.
+
+### 컨슈머 정의 - 2차
+
+앞선 논의로 `AtomicInteger`와 `BlockingQueue`이 단일 연산 안에 있어야함을 깨달았다.
+그래서 `count`와 `queue`를 사용하는 모든 곳에 아래처럼 `synchronized` 구문을 붙였다.
+
+그 결과 `show`를 호출해서 `count`에 락을 소유하려는 main 스레드와 `consumEvent`에서 큐를 지켜보려고 하는 컨슈머 스레드 간의 경쟁상태가 일어나서 테스트가 진행이 안된다.
+
+그럼 `synchronized`가 아니라 다시 `AtomicInteger`를 이용해봤다.
+
+```java
+public class CounterCustomer {
+    private final BlockingQueue<Function<Integer, Integer>> queue;
+    private AtomicInteger count = new AtomicInteger(100);
+
+    public CounterCustomer(BlockingQueue<Function<Integer, Integer>> queue) {
+        this.queue = queue;
+    }
+
+    public void consumEvent() throws InterruptedException {
+        while(!queue.isEmpty()){
+            Function<Integer,Integer> event = queue.take();
+            IntUnaryOperator operator = event::apply;
+            synchronized (this){
+                System.out.println(count.updateAndGet(operator));
+            }
+        }
+    }
+    public int show(){ // 큐가 비어지는 마지막 순간에 if문이 true가 되어 count를 출력해버린다...
+        while(true){
+            if(queue.isEmpty()){
+                return count.get();
+            }
+        }
+    }
+}
+```
+
+어떻게 하면 이 문제를 해결할 수 있을까?
+테스트 결과 대부분 실패가 나온다. 그럼 `consumEvent`는 정상적으로 동작할까?
+
+```
+...
+10096
+10097
+10098
+10099
+10100
+```
+
+100이면 100 터미널에는 예상 값인 **10100**이 찍힌다. 그 말은 `queue`는 스레드 안전하게 항상 처리되고 모든 컨슈머가 **결론적으로** 모든 이벤트를 처리한다는 뜻이다.
+그렇다면 왜 `show`의 출력 값이 예상 값인 **10100**이 나오지 않고 **10098** 같이 몇개 적게 나올까?
+
+## 참고
+
+- [Producer Consumer Solution using BlockingQueue in Java Thread](https://www.geeksforgeeks.org/producer-consumer-solution-using-blockingqueue-in-java-thread/)
+- [System Design Patterns: Producer Consumer Pattern](https://medium.com/@karthik.jeyapal/system-design-patterns-producer-consumer-pattern-45edcb16d544)
+- **자바 병렬 프로그래밍 5장 블로킹 큐와 프로듀서-컨슈머 패턴**
