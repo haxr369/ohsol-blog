@@ -15,7 +15,7 @@ ASAC CS 면접 준비 스터디를 하면서 정리하는 글입니다.
 
 ### 프로세스와 스레드의 차이를 설명해보세요.
 
-- 프로세스와 스레드의 차이 [[답]](https://www.geeksforgeeks.org/difference-between-process-and-thread/)
+- 프로세스와 스레드의 차이 [[참고]](https://www.geeksforgeeks.org/difference-between-process-and-thread/)
 
 ```
 프로세스는 Ready 상태에서 dispatch되어 CPU가 스케줄링하는 프로그램입니다.
@@ -25,7 +25,7 @@ New (create), Ready, Run, Blocked or Wait, 그리고 Terminated or Completed
 
 스레드는 프로세스의 한 부분입니다. 따라서 한 프로세스 안에 여러 스레드가 있을 수 있습니다.
 스레드는 code, data, 그리고 자원을 다른 스레드와 공유합니다.
-스레드는 3가지 상태를 가질 수 있습니다. Running, Ready, and Blocked
+스레드는 5가지 상태를 가질 수 있습니다. New, Running, Waiting, TimeWaiting and Terminated
 
 ----차이점----
 
@@ -65,7 +65,7 @@ stack pointer, instruction pointer, stack, 그리고 registers는 독립적입�
 다만, 멀티스레드가 공유하는 자원을 안전한 방법으로 일관된 상태를 유지해야합니다.
 ```
 
-- 프로세스끼리 어떻게 소통할 수 있을까요? [[답]](https://en.wikipedia.org/wiki/Inter-process_communication)
+- 프로세스끼리 어떻게 소통할 수 있을까요? [[참고]](https://en.wikipedia.org/wiki/Inter-process_communication)
 
 ```
 프로세스끼리 소통하는 것은 interprocess communication(IPC)이라고 합니다.
@@ -77,7 +77,7 @@ IPC를 사용하는 애플리케이션은 클라이언트나 서버로 불립니
 IPC는 커널이 제공하는 기능의 수를 줄이는 microkernels나 nanokernels의 설계 프로세스에서 중요합니다.
 필요한 기능은 서버에게 요청해서 얻을 수 있기 때문입니다. 다만, 일반 monolithic kernel에 비해서 통신량이 크게 증가합니다.
 
-대분의 OS에서 제공하는 IPC 기술은 다음과 같습니다.
+대부분의 OS에서 제공하는 IPC 기술은 다음과 같습니다.
 File : 디스크나 파일 서버에 저장된 파일에 여러 프로세스가 접근하는 방식입니다.
 Socket : 네트워크 인터페이스를 통해 컴퓨터 내,외부 프로세스에 데이터를 전달하는 방식입니다.
   보통 TCP를 사용하지만, 드물게 메세지 지향인 UDP나 SCTP를 사용합니다.
@@ -90,7 +90,7 @@ Shared memory : 여러 프로세스가 공유할 수 있는 메모리 블럭에 
 
 ### 컨텍스트 스위칭에 대해 설명해보세요.
 
-- 컨텍스트 스위칭 [[답]](https://www.geeksforgeeks.org/context-switch-in-operating-system/)
+- 컨텍스트 스위칭 [[참고]](https://www.geeksforgeeks.org/context-switch-in-operating-system/)
 
 ```
 Context switching은 CPU를 사용하여 프로세스를 한 상태에서 다른 상태로 변경하는 데 사용하는 과정을 말합니다.
@@ -111,24 +111,74 @@ Context switch에 걸리는 시간은 시스템이 아무것도 하지 못하는
 
 ### 동기와 비동기의 차이, 블로킹과 넌블로킹의 차이 그리고 장단점에 대해 설명해보세요.
 
-- 블로킹과 넌블로킹 차이 [[답]](https://nodejs.org/en/learn/asynchronous-work/overview-of-blocking-vs-non-blocking)
-- 동기와 비동기 차이 [[답]](https://www.ibm.com/docs/en/aix/7.2?topic=concepts-asynchronous-io-subsystem)
+- 블로킹과 넌블로킹 차이 [[참고]](https://nodejs.org/en/learn/asynchronous-work/overview-of-blocking-vs-non-blocking)
+- 동기와 비동기 차이 [[참고]](https://www.ibm.com/docs/en/aix/7.2?topic=concepts-asynchronous-io-subsystem)
 
 ```
+Blocking은 애플리케이션이 I/O 작업을 호출했을 때, 그 작업이 다 끝날 때까지 다른 작업을 하지 않는 것을 의미합니다.
 
+Non-Blocking은 Blocking과 반대로 애플리케이션이 I/O 작업을 호출했을 때, 다른 작업을 할 수 있는 것을 의미합니다.
+Non-Blocking을 위해선 동시에 여러 작업을 할 수 있어야하기 때문에 멀티 테스킹을 할 수 있어야합니다.
+
+동기 (Synchronous) I/O는 I/O 작업이 끝날 때까지 애플리케이션이 기다리는 것을 의미합니다.
+비동기 (Asynchronous) I/O는 백그라운드에서 작업을 진행하고 애플리케이션은 그 결과에 대해서 관심이 없습니다.
+만약 I/O 작업이 끝나고 추가적인 작업을 원한다면 callback 함수를 실행하도록 합니다.
+
+보통 I/O 작업은 애플리케이션 프로세싱 보다 긴 시간이 필요하기 때문에 비동기적으로 실행하면 더 높은 성능을 보여줍니다.
+하지만, Non-Blocking이나 Asynchronous로 애플리케이션과 I/O 작업을 동시에 진행하면
+메모리 상에 스리드끼리 공유할 수 있는 heap 영역이나 data 영역에 대한 스레드 안전성을 보장해야합니다.
 ```
 
 ### 멀티스레드 프로그래밍에 대해 설명해보세요.
 
-[[답]](https://www.geeksforgeeks.org/multithreading-in-operating-system/)
+[[참고]](https://www.geeksforgeeks.org/multithreading-in-operating-system/)
+
+```
+스레드의 모음은 프로세스입니다. 만약 계산기 프로그램이 싱글스레드라면 화면을 보여주는 작업과 게산하는 작업은 동시에 할 수 없을 것입니다.
+이처럼 멀티 태스킹을 수행하기 위해선 멀티 프로세스나 멀티 스레드가 필요합니다.
+
+스레드는 생성될 때 프로세스의 메모리 맵을 사용할 수 있어서 프로세스에 비해 시작하고 끝내는데 시간이 짧습니다.
+또 멀티 프로세스는 OS가 작업을 관리하지만, 멀티 스레드는 프로그래머가 제어할 수 있습니다.
+그렇기에 멀티 프로세스 보다 멀티 스레드가 더 자주 사용됩니다.
+
+스레드는 5가지 상태를 가질 수 있습니다.
+New : 스레드가 생성되는 시점입니다.
+Runnable : 스레드가 주어진 작업을 실행하는 시점입니다.
+Waiting : 다른 스레드의 작업을 기다리고 있는 시점입니다. 다른 스레드가 작업을 끝냈다는 신호를 주면 다시 Runnable 상태로 돌아갑니다.
+Timed Waiting : runnable 스레드가 구체적인 시간 동안 멈추는 시점입니다. 시간이 다 되거나 이벤트가 발생하면 다시 Runnable 상태로 돌아갑니다.
+Terminated (Dead) : 스레드가 작업을 끝내고 제거되는 시점입니다.
+```
 
 ### Thread-safe 하다는 의미와 설계하는 법을 설명해보세요.
 
-[[답]](https://www.baeldung.com/java-thread-safety)
+[[참고]](https://www.baeldung.com/java-thread-safety)
+
+```
+멀티스레딩이라는 것은 분리된 스레드가 동시에 작업을 실행하는 것을 의미합니다.
+하지만 스레드끼리는 heap 영역, data 영역 같이 공유할 수 있는 자원이 있습니다.
+이런 공유 자원을 다양한 스레드가 자유롭게 접근하고 업데이트하면, 그 결과는 예측할 수 없게 됩니다. 따라서 Thread-safe한 설계가 필요합니다.
+
+무상태성 : 대부분의 경우에서 멀티스레딩의 에러는 부정확한 상태 공유 때문에 발생합니다.
+  그렇다면 스레드가 실행하는 작업을 무상태로 만든다면 해결 할 수 있습니다.
+  즉, 스레드 외부에 어떤 상태도 참조하지 않고 상태를 저장하지 않고 오직 입력된 인자에 의해서 작업의 결과가 결정되도록 하는 것입니다.
+불변성 : 다른 스레드 간 다른 상태를 저장할 필요가 있을 때, 스레드가 가지고 있는 상태를 불변하게 만든다면, Thread-safe하게 만들 수 있습니다.
+Thread-Local Field : 스레드의 작업 중 변할 필요가 있는 객체가 있을 수 있습니다. 이 경우 스레드 내부에서만 사용하는 필드를 사용할 수 있습니다.
+  Thread-Local인 필드의 객체는 오직 스레드 내부에서만 사용되며 절대로 다른 스레드와 공유하면 안됩니다.
+  만약 스레드 외부로 객체를 공개할 필요가 있다면, 객체를 복사한 후 공개해야합니다.
+Concurrent Collections : java 같은 경우 Concurrent Collections를 사용할 수 있습니다.
+  Concurrent Collections는 내부 데이터를 segments로 쪼개고 각 스레드에게 접근할 수 있도록하기 때문에 Thread-safe하고 성능이 좋습니다.
+Atomic Objects : java는 atomic class를 제공합니다.
+  atomic class는 thread-safe하고 클래스 내부에 변수가 하나 있을 때 유용합니다.
+Synchronized : java는 Synchronized 키워드를 이용해 메서드나 블럭을 thread-safe하게 만들 수 있습니다.
+  Synchronized 키워드가 붙은 코드는 오직 한 스레드만 실행시킬 수 있습니다.
+ReentrantLock : Synchronized 키워드를 사용하면 스레드가 락을 얻기 위해 무한히 대기해야합니다.
+  ReentrantLock 락은 가장 오래 기다린 스레드에게 락을 제공하는 공정한 락을 사용할 수 있습니다.
+  이를 통해 계속 락을 얻지 못하고 기다리는 기아 상태를 방지합니다.
+```
 
 ### 프로세스 동기화에 대해 설명해보세요.
 
-[[답]](https://www.geeksforgeeks.org/introduction-of-process-synchronization/)
+[[참고]](https://www.geeksforgeeks.org/introduction-of-process-synchronization/)
 
 ### 교착상태와 기아상태의 해결방법에 대해 설명해보세요.
 
@@ -144,15 +194,15 @@ Context switch에 걸리는 시간은 시스템이 아무것도 하지 못하는
 
 ### 함수 호출에 관련된 스택 프레임에 대해 설명해보세요.
 
-[[답]](https://tcpschool.com/c/c_memory_stackframe)
+[[참고]](https://tcpschool.com/c/c_memory_stackframe)
 
 ### 가상 메모리에 대해 설명해보세요.
 
-[[답]](https://www.techtarget.com/searchstorage/definition/virtual-memory)
+[[참고]](https://www.techtarget.com/searchstorage/definition/virtual-memory)
 
 ### 캐시의 지역성에 대해 설명해보세요.
 
-- [[답]](https://www.geeksforgeeks.org/locality-of-reference-and-cache-operation-in-cache-memory/)
+- [[참고]](https://www.geeksforgeeks.org/locality-of-reference-and-cache-operation-in-cache-memory/)
 
 ### 프로세스 관련 용어를 설명해보세요. (알아만 둡시다.)
 

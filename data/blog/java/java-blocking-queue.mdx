@@ -17,6 +17,9 @@ summary: 'Blocking Queue를 이용해서 Producer-Consumer 패턴 구현하고 �
 두 컴포넌트의 결합을 느슨하게 하는 방법 중 하나로 producer-consumer 패턴을 이용할 수 있다.
 `producer`는 데이터나 이벤트를 **생성**하고 `consumer`는 생성된 데이터나 이벤트를 **처리**한다.
 
+모든 코드는 [spring-concurrency-thread](https://github.com/haxr369/spring-concurrency-thread/tree/main/src/main/java/com/thread/concurrency/counter/producerCustomer)에 있습니다.
+또한 테스트 코드는 [test](https://github.com/haxr369/spring-concurrency-thread/blob/main/src/test/java/com/thread/concurrency/counter/QueueCounterTest.java)에 있습니다.
+
 ### producer-consumer 패턴 문제점
 
 Producer-Consumer는 멀티스레드 환경에서 동기화 관점에서 문제가 발생한다.
@@ -270,6 +273,27 @@ public class CounterCustomer {
 
 100이면 100 터미널에는 예상 값인 **10100**이 찍힌다. 그 말은 `queue`는 스레드 안전하게 항상 처리되고 모든 컨슈머가 **결론적으로** 모든 이벤트를 처리한다는 뜻이다.
 그렇다면 왜 `show`의 출력 값이 예상 값인 **10100**이 나오지 않고 **10098** 같이 몇개 적게 나올까?
+
+### `consumEvent`와 `show` 사이 관계
+
+```java:QueueCounterTest.java
+// CounterCustomer 스레드 생성 및 비동기로 처리 시작
+        for(int i=0; i<3; i++){
+            CompletableFuture.runAsync(()->{ // 멀티 스레드가 consumEvent를 실행
+                try{
+                    customer.consumEvent();
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+        }
+        latch.await(); // 프로듀서 스레드 끝나는 것 기다림
+        int finalCount = customer.show(); // main 스레드가 카운터를 읽음
+```
+
+`consumEvent`도 `latch.await()` 같이 끝나길 기다리면 되는 것 아닌가? 하는 생각이 들었었다.
+
+## 컨슈머 정의 - 3차
 
 ## 참고
 
