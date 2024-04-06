@@ -180,40 +180,94 @@ ReentrantLock : Synchronized 키워드를 사용하면 스레드가 락을 얻�
 
 [[참고]](https://www.geeksforgeeks.org/introduction-of-process-synchronization/)
 
+```
+프로세스 동기화란 멀티 프로세스 상황에서 다양한 프로세스가 동시에 접근할 수 있는 자원을 예측 가능한 방법으로 공유하는 것을 의미합니다.
+프세스 동기화의 주요한 관점은 서로 다른 스레드끼리 간섭하지 않는 것과 동시 접근 때문에 부정확한 데이터를 읽는 것을 방지하는 겁니다.
+
+멀티 프로세스에서 동기화는 데이터 일관성과 무결성 그리고 데드락 같은 동기화 문제를 피하는 겁니다.
+이러한 동기화 전략을 위해 semaphore, monitors, 그리고 critical section이 사용됩니다.
+
+동기화 문제로 race condition으로 인해 잘 못된 값이 공유 변수에 저장될 수 있고,
+critical section으로 인해 활동성 장애가 일어날 수 있습니다.
+
+Race condition은 여러 프로세스가 공유 코드, 공유 메모리, 또는 공유 변수에 접근할 때,
+각 프로세스들이 경쟁적으로 critical section에 접근해서 잘못된 결과물을 저장하는 것을 말합니다.
+Race condition을 해결하는 방법은 공유 변수를 조작하는 부분인 critical section에 atomic 변수를 사용하거나 lock을 거는 방법이 있습니다.
+
+Critical section은 공유 변수를 조작하는 작업이 있는 코드 블럭이고,
+공유 변수를 일관되게 유지하기 위해 몇가지 조건을 충족해야합니다.
+상호 배제(Mutual Exclusion) 조건은 오직 한 스레드만 critical section에 코드를 실행시킬 수 있습니다.
+진행 (Progress) 조건은 critical section에 진행 중인 프로세스가 없을 때, 대기 중인 프로세스가 무한히 대기하지 않도록 해야합니다.
+예를 들어 프로세스가 critical section에서 나갈 때, critical section에 들어올 다음 프로세스를 선택하는 방식으로 어떻게든 다음 프로세스를 들어오게 만들어야합니다.
+한정된 대기 (Bounded Waiting) 조건은 한 프로세스가 너무 오래 기다리면 안된다는 것을 의미합니다.
+즉 한 프로세스가 critical section에 들어가도록 요청했을 때, 일정한 횟수만큼 다른 프로세스가 들어갈 수 있다는 것을 의미합니다.
+
+Semaphores는 여러 스레드가 정수값을 공유하는 시그널링 메커니즘입니다.
+공유된 정수 값이 0이나 일정 수 이하가 될 때 대기중인 스레드가 semaphore를 얻을 수 있는 방식입니다.
+semaphore는 바이너리 semaphore와 카운팅 semaphore가 있습니다.
+바이너리 semaphore는 0 또는 1의 상태를 가질 수 있는데, 초기 모든 프로세스는 1로 초기화된 mutex semaphore를 공유합니다.
+그리고 프로세스는 lock이 0이 될 때까지 대기합니다. 그리고 프로세스는 lock을 1로 만들고, critical section에 들어갑니다.
+카운팅 semaphore는 보통 제한된 자원을 여러 프로세스끼리 공유할 때 사용됩니다.
+lock이 0 이상이 될 때까지 프로세스가 대기하게 되고, critical section에 들어갈 때는 lock에 1을 빼고, 나갈 때는 1을 더합니다.
+
+semaphore는 race condition을 방지할 수 있고, 자원을 잘 분배할 수 있지만, 잘 못 구현될 경우 데드락이 일어날 수 있습니다.
+```
+
 ### 교착상태와 기아상태의 해결방법에 대해 설명해보세요.
 
-[[답]](https://www.geeksforgeeks.org/difference-between-deadlock-and-starvation-in-os/)
+[[참고]](https://www.geeksforgeeks.org/difference-between-deadlock-and-starvation-in-os/)
+
+```
+데드락은 한 스레드가 자원에 락을 걸고 다른 자원의 락을 얻으려고 기다릴 때,
+다른 스레드가 그 락을 걸고 있고, 이미 락이 걸린 자원을 얻으려고 대기해서 두 스레드가 아무건 작업도 하지 못하고 대기만 하는 상태를 의미합니다.
+
+기아 상태는 우선순위가 높은 프로세스는 계속 락을 얻지만, 우선순위가 낮은 프로세스는 계속 락을 얻지 못하고 대기만하는 상태를 의미합니다.
+```
 
 ### 세마포어와 뮤텍스의 차이에 대해 설명해보세요.
 
-[[답]](https://www.geeksforgeeks.org/mutex-vs-semaphore/)
+[[참고]](https://www.geeksforgeeks.org/mutex-vs-semaphore/)
+
+```
+뮤텍스와 세마포어는 커널에서 동기화를 위해 제공하는 서비스입니다.
+뮤텍스는 락킹 메커니즘을 이용하는 바이너리 세마포어의 한 종류입니다. 보통 코드의 상호 배제적인 부분을 한정할 때 사용합니다.
+뮤텍스는 race condition을 방지하고 데이터를 일관되게 유지시킬 수 있습니다.
+하지만, critical section이나 변수를 오직 한 스레드만 사용할 수 있기 때문에 활동성 장애가 발생할 수 있습니다.
+
+세마포어는 정수 값을 멀티 스레드가 시그널 메커니즘을 이용해서 공유합니다.
+카운팅 세마포어를 사용하면 여러 스레드가 공유 자원이나 critical section에 접근할 수 있습니다.
+하지만, 세마포의 wait과 signal 함수가 데드락을 방지하도록 안전하게 사용돼야합니다.
+또한 여러 스레드가 접근할 수 있다는 건 상호 배제 원칙을 위반하기 때문에 동시성 문제의 원인이 될 수 있습니다.
+```
 
 ### 메모리의 구조에 대해 설명해보세요.
 
-[[답]](https://tcpschool.com/c/c_memory_structure)
+- 함수 호출에 관련된 스택 프레임도 설명해보세요.
 
-### 함수 호출에 관련된 스택 프레임에 대해 설명해보세요.
+  [[참고]](https://tcpschool.com/c/c_memory_structure)
+  [[참고]](https://tcpschool.com/c/c_memory_stackframe)
 
-[[참고]](https://tcpschool.com/c/c_memory_stackframe)
+```
+메모리에는 코드 영역, 데이터 영역, 힙 영역, 스택 영역이 있습니다.
+코드 영역은 프로그램의 코드가 들어가는 영역입니다.
+CPU는 코드 영역의 코드를 하나씩 가져가서 처리합니다.
+데이터 영역은 전역, 정적 변수가 저장되는 영역입니다.
+프로그램 시작과 함께 할당되며, 프로그램이 종료되면 소멸합니다.
+스택 영역은 함수 시작과 함께 생성되고 함수가 끝나면 소멸되는 영역입니다.
+스택 영역에 저장되는 함수의 호출 정보를 스택 프레임이라고 하며 스택 프레임에는 함수 호출 인자, 지역 변수, return memory address가 저장됩니다.
+힙 영역은 사용자가 직접 관리하는 메모리 영역입니다.
+사용자에 의해 동적으로 할당되고 해제됩니다.
+```
 
 ### 가상 메모리에 대해 설명해보세요.
 
 [[참고]](https://www.techtarget.com/searchstorage/definition/virtual-memory)
 
-### 캐시의 지역성에 대해 설명해보세요.
-
-- [[참고]](https://www.geeksforgeeks.org/locality-of-reference-and-cache-operation-in-cache-memory/)
-
-### 프로세스 관련 용어를 설명해보세요. (알아만 둡시다.)
-
-```java
-PCB: 프로세스 제어 블록, 프로세스에 대한 중요한 정보를 저장합니다.
-
-PC: 프로그램 카운터, 프로세스 실행을 위한 다음 명령의 주소를 표시합니다.
-
-캐시메모리: 자주 사용되는 데이터가 저장되는 공간으로 CPU의 레지스터와 메모리 사이에서 병목 현상을 완화하는 장치입니다.
 ```
+가상 메모리는 물리적 메모리를 보안하기 위해 RAM에 있는 데이터를 디스크로 전달하는 기술입니다.
+디스크 파일로 메모리 조각을 저장하가는 방식은 컴퓨터가 보조 메모리를 마치 주 메모리처럼 사용할 수 있게합니다.
 
-### CISC와 RISC의 차이 (전공자라면 받는 질문.. ㅠㅠ)
-
-[[참고]](https://www.guru99.com/ko/risc-vs-cisc-differences.html)
+가상 메모리는 시스템 성능 향상을 위해 꼭 필요합니다.
+하지만, 너무 많이 의존하면 오히려 느려질 수 있는데 그 이유는 하드디스크 같은 보조 기억장치는 RAM에 비해 매우 느리기 때문입니다.
+또 OS가 너무 자주 RAM과 가상 메모리 사이 데이터를 스왑하게 되면, 컴퓨터 속도가 느려지는 thrashing 상태가 됩니다.
+```
