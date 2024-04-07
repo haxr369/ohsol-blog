@@ -56,7 +56,7 @@ producer와 consumer를 교체하거나 재시작할 수 있어서 내결함성�
 이를 위해 java8부터 가능한 함수형 인터페이스를 이용해 일급함수를 Queue에 저장하려고 한다.
 요구사항은 기존 카운트 값에 int 값을 더해 카운트 값을 업데이트하는 것이기 때문에 `Function`을 사용한다.
 
-`BlockingQueue`를 관리하는 브로커를 아래처럼 작성했다.
+`BlockingQueue`를 관리하는 브로커를 아래처럼 작성했고, github 커밋은 여기다.
 
 ```java
 public class CounterBroker {
@@ -176,80 +176,51 @@ public class QueueCounterTest {
 
 ```:테스트 실행 결과
 expected: <10100> but was: <10096>
-	...
-	at com.thread.concurrency.counter.QueueCounterTest.프로듀서_컨슈며_더하기_멀티_프로듀서_멀티_컨슈머(QueueCounterTest.java:53)
-```
-
-## 여러 연산에 있어서 단일 스레드 안전성
-
-앞선 테스트 결과가 실패한 이유는 [producer-consumer-패턴의 문제점](#producer-consumer-패턴-문제점) 때문에 발생한다.
-프로듀서끼리와 컨슈머끼리 공유하는 `BlockingQueue`는 스레드에 안전하지만, 컨슈머끼리 공유하는 `count`는 스레드에 안전하지 않았던 것이다.
-
-분명 `AtomicInteger`는 스레드에 안전하다고 생각했는데 왜 그럴까?
-
-[책 57p](#참고)에 나와있듯이 아래 내용을 **컨슈머**가 충족시키지 않은 것이다.
-
-> 상태를 일관성 있게 유지하려면 관련 있는 변수들을 하나의 단일 연산으로 갱신해야 한다.
-
-컨슈머는 아래 두가지 변수를 연관지어서 동작한다.
-
-```java:CounterCustomer
 ...
-private final CounterBroker counterBroker;
-private AtomicInteger count = new AtomicInteger(100); // AtomicInteger로 변경
-...
+at com.thread.concurrency.counter.QueueCounterTest.프로듀서_컨슈며_더하기_멀티_프로듀서_멀티_컨슈머(QueueCounterTest.java:53)
 ```
 
-`counterBroker`와 `count`는 `최신의 count를 읽어 counterBroker의 마지막 event를 처리한다.`라는 불변 조건으로 묶여있고,
-여러 개의 변수가 하나의 불변조건을 구성하고 있다면, 이 변수들은 독립적이지 않다.
-따라서 변수 하나를 갱신할 때, 다른 변수도 동일한 단일 연산 작업 내에서 함께 변경해야 한다.
+## 컨슈머 리팩토링
 
-책에서 연관된 여러 변수를 단일 연산 작업 내에서 변경하는 방법을 암묵적락을 통해 해결할 수 있다고 소개한다.
+### 문제의 원인 1 - 카운터 결과 값을 읽을 수 있는 시점과 컨슈머 작업 종료 시점의 불일치
 
-### 암묵적인 락 - synchronized
+> 카운터를 읽을 수 있지만, 컨슈머는 카운터를 업데이트 하고 있었다.
 
-`synchronized` 구문은 락으로 사용될 객체의 참조 값과 해당 락으로 보호하려는 코드 블록으로 구성된다.
+[코드를 보면](#컨슈머-정의---1차) 컨슈머가 영원히 while 문을 돌면서 작업을 진행한다.
+이럴 경우 Test를 하거나 작업을 맡길 때 끝났는지 정확하게 알 수 없다.
+`CounterCustomer.show` 메서드를 보면, 단지 큐의 사이즈만 보고 카운터를 관측한다.
+하지만, 큐가 비어있다고 무조건 컨슈머의 모든 작업이 끝남을 보장할 수 있을까?
 
-```
-synchronized(lock){
-  // lock으로 보호된 공유 상태에 접근하거나 해당 상태를 수정할 수 있다.
-}
-```
+그럴 수 없다. 컨슈머는 모든 작업을 끝냈다고 알려준적이 없다.
+단지 큐에서 작업을 빼갔고, 컨슈머 스레드의 작업이 미처 끝나기 전에 main 스레드가 `show` 메서드를 실행시킨 것 뿐이다.
+그 결과 `show`의 출력에는 스테일 데이터가 나오게 된다.
 
-위처럼 자바에 내장된 락을 암묵적인 락 혹은 모니터 락이라고 한다. 락은 스레드가 `synchronized` 블록으로 들어가기 전에 자동으로
-확보되며 정상적으로든 예외가 발생해서든 해당 블록을 벗어날 때 자동으로 해제된다.
+그림으로 보면 아래 같은 상황인 것이다.
 
-또한 자바에서 암묵적인 락은 **뮤텍스**(mutexes)로 동작한다. 즉 한 번에 한 스레드만 특정 락을 소유할 수 있다.
-만약 스레드 B가 락을 놓지 않으면 스레드 A는 영원히 기다릴 수밖에 없다.
+<img
+  src="/static/images/java/java-concurrency-producer-consumer.png"
+  alt="컨슈머 작업 끝나기도 전에 카운터 값 읽는 문제"
+/>
 
-### 컨슈머 정의 - 2차
+### 문제의 원인 2 - 프로듀서의 작업 생성 속도와 컨슈머의 작업 처리 속도 차이
 
-앞선 논의로 `AtomicInteger`와 `BlockingQueue`이 단일 연산 안에 있어야함을 깨달았다.
-그래서 `count`와 `queue`를 사용하는 모든 곳에 아래처럼 `synchronized` 구문을 붙였다.
+[위 원인](#문제의-원인-1---카운터-결과-값을-읽을-수-있는-시점과-컨슈머-작업-종료-시점의-불일치)을 해결하고자 컨슈머를 아래 같이 수정했다.
+코드는 [여기](https://github.com/haxr369/spring-concurrency-thread/commit/8eba8ee7457f809a8a17b55d278115280ab739e9#diff-44034c36afdc4aa1259cff538118ce29720a895be9713dfe230071b3a9bf4a88)에 있다.
 
-그 결과 `show`를 호출해서 `count`에 락을 소유하려는 main 스레드와 `consumEvent`에서 큐를 지켜보려고 하는 컨슈머 스레드 간의 경쟁상태가 일어나서 테스트가 진행이 안된다.
+```java:CounterConsumer.java
+public class CounterConsumer {
+    ...
 
-그럼 `synchronized`가 아니라 다시 `AtomicInteger`를 이용해봤다.
+    public void consumeEvent() throws InterruptedException {
 
-```java
-public class CounterCustomer {
-    private final BlockingQueue<Function<Integer, Integer>> queue;
-    private AtomicInteger count = new AtomicInteger(100);
-
-    public CounterCustomer(BlockingQueue<Function<Integer, Integer>> queue) {
-        this.queue = queue;
-    }
-
-    public void consumEvent() throws InterruptedException {
-        while(!queue.isEmpty()){
-            Function<Integer,Integer> event = queue.take();
-            IntUnaryOperator operator = event::apply;
-            synchronized (this){
-                System.out.println(count.updateAndGet(operator));
-            }
+        while (!queue.isEmpty()) {
+            System.out.println(Thread.currentThread().getName()+"은 현재 큐 사이즈 : "+queue.size());
+            Long value = queue.take();
+//            count.addAndGet(value);
+            System.out.println("결과 카운트 : "+count.addAndGet(value));
         }
     }
-    public int show(){ // 큐가 비어지는 마지막 순간에 if문이 true가 되어 count를 출력해버린다...
+    public Long show(){
         while(true){
             if(queue.isEmpty()){
                 return count.get();
@@ -259,41 +230,82 @@ public class CounterCustomer {
 }
 ```
 
-어떻게 하면 이 문제를 해결할 수 있을까?
-테스트 결과 대부분 실패가 나온다. 그럼 `consumEvent`는 정상적으로 동작할까?
+위처럼 컨슈머를 작성하고 실행시키면, 테스트에 명시한 카운트 증가가 이뤄지지 않았는데 모든 컨슈머가 작업을 종료하고 큐에는 다시 작업이 쌓이게 된다.
+[프로듀서](#프로듀서-정의)는 작업을 추가할 때 큐의 용량이 다 **차면** 자리가 날 때까지 **대기**하기 때문에 끝나지 않고 종료도 되지 않는다.
+그렇기 때문에 컨슈머가 작업을 종료하는 기준을 다시 세워야한다.
+
+단순히 큐가 비었냐로 판단하지 않는다면 어떻게 판단할 수 있을까?
+
+1. **프로듀서와 컨슈머가 flag로 통신하기**
+
+   프로듀서가 컨슈머의 **flag**를 바꾸면서 flag가 true면 컨슈머가 작업을 계속 진행하고 flase면 작업을 멈추게하는 방식이다.
+   이런 방식의 장점은 **구현의 간단함**이 있다. 하지만, 작업의 생성과 수행의 의존성을 낮추는 목적인 프로듀서-컨슈머 패턴에서 이런 방식은 두 모듈을 의존하게 만드는 것이기 때문에 본질과 멀어진다.
+
+2. **컨슈머가 작업을 잠시 대기하기**
+   프로듀서와 컨슈머를 독립적으로 유지하면서 큐가 비어있더라도 컨슈머가 계속 작업을 하기위해선, 컨슈머가 큐가 비었더라고 잠시 대기하는 방식을 쓸 수 있다.
+   이를 위해 `BlockingQueue poll()` 메서드를 사용할 수 있다.
+
+### 컨슈머 정의 - 최종
 
 ```
-...
-10096
-10097
-10098
-10099
-10100
+public class CounterConsumer implements Consumer {
+    private final BlockingQueue<Long> queue;
+    private final AtomicLong count = new AtomicLong(0);
+
+    public CounterConsumer(BlockingQueue<Long> queue) {
+        this.queue = queue;
+    }
+
+    public void consumeEvent(long timeout, TimeUnit unit) throws InterruptedException {
+        while (true) {
+            Long value = queue.poll(timeout, unit);
+            if(value == null){
+                break;
+            }
+            count.addAndGet(value);
+        }
+    }
+    public Long show(){
+        while(true){
+            if(queue.isEmpty()){
+                return count.get();
+            }
+        }
+    }
+}
 ```
 
-100이면 100 터미널에는 예상 값인 **10100**이 찍힌다. 그 말은 `queue`는 스레드 안전하게 항상 처리되고 모든 컨슈머가 **결론적으로** 모든 이벤트를 처리한다는 뜻이다.
-그렇다면 왜 `show`의 출력 값이 예상 값인 **10100**이 나오지 않고 **10098** 같이 몇개 적게 나올까?
+위와 같이 `consumeEvent`는 무한히 작업을 진행하지만, 큐가 빌때 **timeout** 시간 동안 대기한다.
+컨슈머가 대기하는 동안 프로듀서가 큐에 작업을 넣는다면, 컨슈머가 다시 작업을 시작하고 그렇지 않다면 컨슈머는 `null`을 반환하고 작업을 끝내게 된다.
 
-### `consumEvent`와 `show` 사이 관계
+모든 컨슈머가 작업을 끝낸걸 어떻게 알 수 있을까?
+`CountDownLatch`를 이용하면 모든 컨슈머 스레드가 작업을 끝낼 때까지 대기할 수 있다.
 
 ```java:QueueCounterTest.java
-// CounterCustomer 스레드 생성 및 비동기로 처리 시작
-        for(int i=0; i<3; i++){
-            CompletableFuture.runAsync(()->{ // 멀티 스레드가 consumEvent를 실행
-                try{
-                    customer.consumEvent();
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                }
-            });
-        }
-        latch.await(); // 프로듀서 스레드 끝나는 것 기다림
-        int finalCount = customer.show(); // main 스레드가 카운터를 읽음
+...
+// 컨슈머 스레드 생성
+consumerService.submit(() -> {
+    try {
+        consumer.consumeEvent(timeout, unit);
+        consumerLatch.countDown();
+    } catch (InterruptedException e) {
+        throw new RuntimeException(e);
+    }
+});
+consumerLatch.await(); // 모든 컨슈머 스레드가 작업을 끝낼 때까지 대기
+...
 ```
 
-`consumEvent`도 `latch.await()` 같이 끝나길 기다리면 되는 것 아닌가? 하는 생각이 들었었다.
+## 결론
 
-## 컨슈머 정의 - 3차
+길고긴 삽질 끝에 `BlockingQueue`를 이용해 프로듀서-컨슈머 카운터를 구현했다. 프로듀서-컨슈머 패턴은 서로 다른 역할을 하는 모듈의 의존성을 낮출 때 사용한다고 한다.
+특히 버퍼링 통신, 데이터 수집 및 처리, 큐 메시지 처리 같은 분야에서 자주 사용되는 프로듀서-컨슈머 패턴을 구현해보면서 앞으로 프로젝트에서 자주 사용할 것 같다.
+
+느낀 점은 프로듀서와 컨슈머를 만드는 것도 동시성을 고려하면서 이 둘을 사용하는 부분 여기서는 `QueueCounterTest.java`도 중요함을 느꼈다.
+프로듀서 컨슈머의 스레드를 적절하게 분배하고 타임아웃이나 큐 케페시터 등 여러 파라미터를 지정하기 때문이다.
+
+멀티스레드 작업은 운영 환경에 따라 다른 파라미터가 필요할 것 같다. **Macbook Air M2** 환경에서 Test 할 때 5억개의 작업을 큐에 넣고 뺐는데, 시간이 30초 정도로 시간이 오래 걸렸다.
+물론 스레드 개수나 케페시터 사이즈에 따라 다양한 결과가 있을 것이다. 프로젝트에서 프로듀서-컨슈머 패턴을 사용한다면 단순 구현 뿐 아니라 실제 요청과 가장 유사한 테스트에서 시간이 가장 짧게 걸리는 파라미터를 찾는데 시간을 많이 쏟을 것 같다.
 
 ## 참고
 
