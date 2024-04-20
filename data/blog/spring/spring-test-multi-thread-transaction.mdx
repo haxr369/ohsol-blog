@@ -1,10 +1,10 @@
 ---
-title: 테스트 코드 작성하기 with Transaction (2)
-date: 2023-12-17
-lastmod: 2023-12-17
+title: [작성 중] 테스트 코드 작성하기 with Transaction (2)
+date: 2024-04-21
+lastmod: 2024-04-21
 tags: ['java', 'Sping', 'TestCode', 'JUnit', 'SpringBootTest', 'Transaction', 'multi-thread']
 draft: false
-summary: '멀티스레드'
+summary: '멀티스레드로 상품 재고를 정상적으로 업데이트 시키기'
 ---
 
 ## 목차
@@ -14,6 +14,4 @@ summary: '멀티스레드'
 지난 포스팅 [테스트 코드 작성하기 with Transaction (1)](/blog/)에서는 Spring Stopwatch로 테스트 시간을 측정하고,
 **멀티 스레드**의 **Transaction**끼리 [Transaction의 Isolation level](/blog/db/transaction-isolation)에 따라 정상적으로 격리되지 않는 문제를 확인했다.
 
-## 문제 상황 리캡
-
-아래 그림처럼 한 티켓 데이터에 여러 **스레드**에서 생성한 **transaction**이 거의 **동시에** 수량을 **감소**시키는 요청을 하려고 한다.
+이번 포스팅에서는 상품 재고를 여러 **스레드**에서 생성한 **transaction**이 거의 **동시에** 재고를 **감소**시키는 요청을 성공적으로 수행하려고 한다.
