@@ -1,0 +1,157 @@
+---
+title: Spring JPA의 Transcation과 Race condition 해결법
+date: 2024-04-22
+lastmod: 2024-04-22
+tags: ['java', 'Sping', 'Transcation', 'lock', 'pessimistic', 'optimistic']
+draft: false
+summary: '여러 transcation이 격리되지 않고 경쟁상태에 빠지는 이유와 해결법'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 문제 상황
+
+[spring-templates](https://github.com/spring-templates/spring-concurrency-jpa) 프로젝트를 진행하던 중 신기한 상황에 직면했습니다.
+분명 `@Transcation`을 붙인 메서드를 여러 스레드에서 실행시켰을 때, 각 transcation에서 dirty read 문제가 발생하는 겁니다!!
+
+아래 메서드는 db에 1번 coreProduct를 찾고 그 재고를 감소시키는 메서드입니다.
+@Transactional의 기본 격리수준은 **REPEATABLE_READ**로 다른 transcation의 업데이트를 사용할 때 commit된 결과를 사용하는 격리 수준입니다.
+만약 아래 `subtractCoreProductStock` 메서드를 멀티스레드로 실행시키면 경쟁 상태가 발생하고 테스트는 실패하게됩니다.
+
+```java:OrderServiceImpl.java
+
+  @Override
+  @Transactional(isolation = Isolation.REPEATABLE_READ)
+  public long subtractCoreProductStock(Long coreProductId, Long reqStock){
+      CoreProduct coreProduct = coreProductRepository.findById(coreProductId)
+              .orElseThrow(() -> new BaseException(BaseResponseStatus.FAIL));
+      if(reqStock > coreProduct.getStock()){
+          throw new BaseException(BaseResponseStatus.NOT_ENOUGH_STOCK);
+      }
+      Long result =  coreProduct.addStrock(-reqStock);
+      return result;
+  }
+
+```
+
+## 원인 찾기
+
+스택 오버 플로우를 떠돌다 [Race condition between transactions](https://stackoverflow.com/questions/38361098/race-condition-between-transactions) 이런 포스트를 봤습니다.
+여러 transaction이 격리되지 않는 상황이 비슷했습니다.
+
+원인을 찾아보자면, Transaction 격리 수준과 동시성 제어 전략은 다르다는 결론에 도달했습니다.
+개발자가 Transaction 격리 수준을 아무리 높여봤자 DB 입장에서 레코드의 상태에 대한 관리를 하지 않는다면 격리수준이 의미가 없어지는 것입니다.
+
+그렇다면 개발자가 작성한 Transaction 격리 수준에 따라 격리되도록 하려면 어떻게 해야할까요?
+
+**pessimistic**인 방법과 **optimistic**한 방법을 생각할 수 있습니다.
+
+### pessimistic locking
+
+비관적 락은 lock이 걸린 레코드에 대해 lock을 소유한 transaction 외 다른 것은 접근하지 못하도록 하는 겁니다.
+그렇다면 lock이 걸린 레코드에 대해선 격리가 충분히 이뤄질 겁니다.
+아래처럼 비관적 락을 사용하도록 JPA 쿼리 메서드를 작성하면 테스트가 통과합니다.
+
+```java:coreProductRepository.java
+@Repository
+public interface CoreProductRepository extends JpaRepository<CoreProduct, Long> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select c from CoreProduct c where c.id = :id" ) // 왜 findByTicketName는 직접 못할까?
+    Optional<CoreProduct> findByIdPessimistic(@Param("id") Long id);
+}
+```
+
+Hibernate가 레코드를 불러올 때 생성하는 쿼리를 기존과 비교하면 아래와 같습니다.
+
+```기본 상황
+select cp1_0.core_product_id,cp1_0.price,cp1_0.seller_id,cp1_0.stock
+  from core_product cp1_0 where cp1_0.core_product_id=?
+```
+
+```비관적 락 적용
+select cp1_0.core_product_id,cp1_0.price,cp1_0.seller_id,cp1_0.stock
+  from core_product cp1_0 where cp1_0.core_product_id=?
+  for update
+```
+
+위 두 쿼리의 차이점은 `for update`의 유무입니다.
+mysql 같은 경우 `for update`가 붙어있으면 행과 연결된 모든 인덱스 항목에 배타적 락을 걸게됩니다.
+즉, 비관적 락은 배타적 락을 이용해서 행에 Lock을 걸어 다른 transaction이 접근하지 못하게 하는 겁니다.
+
+### optimistic locking
+
+낙관적 락은 DB가 레코드에 별다른 lock을 걸진 않지만, 추가적인 속성을 부여해서 속성의 변화에 따라 행의 변화를 감지하고 격리수준에 맞게 동작합니다.
+낙관적 락은 행에 대해 lock을 걸지 않기 때문에 읽는 동안 읽기와 쓰기가 자유롭기 때문에 데드락 발생 가능성이 낮습니다.
+하지만, 충돌이 발생했을 때 데이터를 다시 읽고, 업데이트해야 하는 **추가 작업**이 필요합니다.
+
+사실 엔티티를 만들고 기본적으로 낙관적락을 사용해왔습니다.
+하지만, **버전** 관리를 하지 않아 언제 업데이트 됐는지 알 수 없는 상황으로 [문제 상황](/문제 상황)의 dirty read가 발생하는 겁니다.
+따라서 추가적인 버전을 부여하고 예외처리 로직을 추가하면 동시성 처리를 할 수 있습니다.
+
+```java:CoreProduct.java
+@Table(name = "core_product")
+public class CoreProduct {
+    @Id
+    @Getter
+    @Column(name = "core_product_id")
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    private Long price;
+    @Version
+    private Long version;
+    @Getter
+    private Long stock;
+    @Column(name = "seller_id")
+    private Long sellerId;
+
+    public long addStrock(Long change){
+        stock += change;
+        return stock;
+    }
+}
+
+```
+
+위와 같이 엔티티에 버전을 추가하고 [테스트 코드](https://github.com/haxr369/spring-concurrency-jpa/blob/feature/order/src/test/java/com/concurrency/jpa/order/ConcurrentOrderServiceTest.java)를 실행시키면 아래 에러가 많이 뜨게 됩니다.
+
+```
+Row was updated or deleted by another transaction (or unsaved-value mapping was incorrect)
+```
+
+spring jpa가 봤을 때 한 transaction에서 이전에 읽은 **Version**과 update를 하려고 봤을 때 읽은 **version**이 달라서 예외를 발생시키는 겁니다.
+
+```java:OrderServiceImpl.java
+    @Transactional(isolation = Isolation.REPEATABLE_READ)
+    public long subtractCoreProductStockOptimistic(Long coreProductId, Long reqStock) throws InterruptedException {
+        int patience = 0;
+        while(true){
+            try{
+                CoreProduct coreProduct = coreProductRepository.findByIdPessimistic(coreProductId)
+                        .orElseThrow(() -> new BaseException(BaseResponseStatus.FAIL));
+                if(reqStock > coreProduct.getStock()){
+                    throw new BaseException(BaseResponseStatus.NOT_ENOUGH_STOCK);
+                }
+                return coreProduct.addStrock(-reqStock);
+            }
+            catch(OptimisticLockingFailureException oe){
+                if(patience == 5){
+                    throw new BaseException(BaseResponseStatus.OPTIMISTIC_FAILURE);
+                }
+                patience++;
+                Thread.sleep(50);
+            }
+        }
+    }
+```
+
+while문으로 계속 반복되게 해서 예외가 발생하더라도 5회까지는 다시 시도할 수 있도록 작성했습니다.
+
+## 결론
+
+낙관적 락의 구현을 볼 때, 낙관적 락은 동시성 문제가 빈번히 일어나는 부분에 적절하지 않다는게 느껴졌습니다.
+왜냐하면 예외가 발생하면 메서드 전체를 다시 수행시켜야하는데 만약 사이드 이펙트라도 있으면 외부에 영향을 계속 줄 수 있고, 서버 오버헤드도 발생할 것입니다.
+
+그렇기에 일반적인 상황에서는 낙관적 락을 사용하되, 동시성 문제가 빈번히 발생할 것 같은 레코드를 업데이트할 때는 비관적 락을 이용해서 업데이트 해야할 것 같습니다.
+다음에는 네임드 락을 이용해서 동시성 문제를 해결해보도록 하겠습니다.
