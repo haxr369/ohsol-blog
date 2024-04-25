@@ -1,0 +1,83 @@
+---
+title: SAGA 패턴으로 서비스 전반에 걸친 분산 트랜잭션 (1)
+date: '2024-04-25'
+lastmod: '2024-04-25'
+tags: ['Network', 'saga', 'hexagonal', 'architecture']
+draft: false
+summary: 핵사고날 아키텍처와 SAGA 패턴을 이용해 여러 서비스 전반에 걸친 분산 트랜잭션 구현하기
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 분산 transaction 필요성
+
+마이크로 아키텍처는 보통 여러 서버와 여러 DB가 통신하는 구조로 분산 시스템이라고 합니다.
+분산 시스템은 여러 장점이 있지만, 가장 큰 단점으로 여러 서비스에 걸친 transaction을 관리하기 어려운 문제가 있습니다.
+각 서비스 당 하나의 DB를 가지면 각 서비스는 도메인 데이터를 독립적으로 관리할 수 있습니다.
+하지만 여러 서비스에 걸친 DB 업데이트 작업 안에 한 서비스에서 오류가 발생하면, DB의 consistency를 유지하기 위해서 다른 서비스에 DB도 롤백을 해야합니다.
+
+분산 트랜잭션은 위와 같은 분산 시스템의 consistency를 유지하는 방법입니다.
+만약 주문 생성 서비스와 결제 서비스가 있을 때, 아래 같은 순서를 따른다고 가정합시다.
+실제 구현에서는 2,4 사이에 더 많은 서비스가 들어갈 수 있습니다.
+
+1. 클라이언트가 주문 서비스에 주문 입력
+2. 주문 서비스가 주문을 생성(DB 작업)하고 결제 서비스에 결제 요청
+3. 결제 서비스가 결제(DB 작업)하고 응답
+4. 주문 서비스가 응답을 받아 주문 확정(DB 작업)하고 클라이언트에게 응답
+
+만약 2~4 단계 중 한 단계라도 에러가 발생하면 이전에 진행한 모든 작업을 롤백해야합니다. 그렇기 위해선 여러 작업이 한 논리 작업으로 묶여있음을 알아야하고 우리는 분산 transaction이라 부릅니다.
+
+## 분산 transaction 구현하는 방법
+
+### 2-Phase-Commit protocol(2PC)
+
+2PC에는 각 서비스의 트랜젝션을 관리하고 제어하는 로직을 가진 coordinator 컴포넌트가 있고 나머지 서비스는 participating node라고 합니다.
+분산 트랜젝션을 아래 단게를 통해서 구현합니다.
+
+1. **Prepare Phase** : coordinator가 participating node들에게 transaction을 시작할 준비가 됐는지 묻습니다.
+2. **Commit Phase** : 만약 모든 participating node들이 괜찮다고 하면, coordinator는 모든 node가 commit하도록 요청합니다. 만약 하나라도 commit하지 못하는 상황이 오면 coordinator는 모든 node에게 local transaction을 이용해 rollback하도록 요청합니다.
+
+2PC는 구현하기 쉽지만, 여러 단점을 가집니다.
+
+1. **Single point of failure의 존재** : 모든 transaction이 coordinator가 관리하기 때문에 coordinator에서 문제가 생기면 전체 서비스가 멈추는 문제가 발생합니다. 또한 2단계를 모든 서비스에게 요청해야하기 때문에 coordinator가 다른 서비스와 과도하게 의존합니다.
+2. **가장 느린 서비스가 끝날 때까지 기다림** : 2PC에서 2번째 단계인 commit하기 위해선 모든 서비스가 작업을 끝냈다는 것이 증명되어야합니다. 그러면 빠르게 작업을 끝낸 서비스는 느린 서비스를 기다리기 위해 transaction에 묶여서 성능적으로 안 좋은 영향을 받습니다.
+
+### SAGA 아키텍처 패턴
+
+SAGA 패턴은 분산 트랜젝션을 local transaction의 순서로 관리합니다. local transaction은 saga 참여자의 작업 단위입니다.
+Saga를 이루는 모든 작업은 보상 transaction을 통해 rollback을 할 수 있어야합니다.
+이를 통해 Saga는 모든 작업이 완전히 끝나거나 보상 transaction을 통해 rollback되는 것을 보장합니다.
+Saga에서 보상 transaction은 모두 순수함수 같이 멱등성이 있어야합니다. Saga Execution Coordinator가 이러한 원칙을 보장합니다.
+
+<img alt="Saga 보상 transaction 과정" src="/static/images/network/saga-pattern.png" />
+
+## Saga Execution Coordinator 동작 과정
+
+SEC는 Saga flow를 구현하기 위해 중앙에 존재하는 컴포넌트 입니다. SEC는 Saga log라는 것을 저장하는데 이는 분산 transaction의 실행 순서를 저장합니다.
+만약 transaction에서 실패가 일어나면 실패한 컴포넌트의 Saga log를 통해 보상 transaction을 수행해야하는 서비스를 확인합니다.
+Saga pattern을 구현하는데는 choreography와 orchestration 두가지 방법이 있습니다.
+
+### Saga Choreography Pattern
+
+choreography 패턴에서는 transaction 안에서 각 마이크로 서비스는 다음 마이크로 서비스에게 이벤트를 게시합니다.
+choreography flow가 성공하는 조건은 모든 local transaction이 성공하고 어떤 마이크로 서비스도 실패했다고 보고하지 않는겁니다.
+아래는 choreography flow를 보여주는 사진입니다.
+
+<img alt="Saga choreography flow 과정" src="/static/images/network/saga-coreography.png" />
+
+만약 이벤트가 실패한다면, 마이크로 서비스가 SEC에게 실패를 보고합니다. SEC는 필요한 마이크로 서비스에게 보상 transaction을 일으킬 책임이 있습니다.
+만약 보상 transaction이 실패했다면, SEC는 성공할 때까지 재시도합니다. Saga는 local transaction을 순서대로 실행시키기 때문에 참여자가 적을 때 유용합니다.
+
+### Saga Orchestration Pattern
+
+하나의 orchestrator가 모든 transaction 상태를 관리하는 책임을 가집니다.
+만약 어떤 마이크로 서비스에 에러가 발생하면 orchestrator가 필요한 보상 transaction을 전부 호출합니다.
+이 패턴은 이미 마이크소서비스가 있고, 여기에 Saga 패턴을 구현할 때 유용합니다.
+
+<img alt="Saga Orchestration flow 과정" src="/static/images/network/saga-orchestration.png" />
+
+## 내용 출처
+
+[Saga Pattern in Microservices](https://www.baeldung.com/cs/saga-pattern-microservices)
