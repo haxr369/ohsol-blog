@@ -129,7 +129,8 @@ Servlet Filter와 Interceptor는 차이는 java의 servlet container에서 실�
 ### Spring에서 CORS 에러를 해결하기 위한 방법을 설명해주세요.ㆍ
 
 `CorsConfiguration`에 허용할 url과 http method 설정을 통해 가능합니다.
-이는 CorsWebFilter를 설정할 수 있고, CorsWebFilter는 설정에 따라 CORS preflight requests를 핸들링할 수 있고, CORS simple을 가로챌 수 있습니다.
+이는 CorsWebFilter를 설정할 수 있고, CorsWebFilter는 설정에 따라 CORS preflight requests를 핸들링할 수 있고,
+CORS simple을 가로챌 수 있습니다.
 
 ```java
 @Bean
