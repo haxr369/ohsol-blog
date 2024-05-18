@@ -1,0 +1,42 @@
+---
+title: '[작성 중] Spring Security를 사용해야하는 이유와 배경'
+date: 2024-05-14
+tags: ['spring', 'security']
+draft: false
+summary: 'Spring Security를 사용하는 이유 그리고 내부 동작을 설명'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 개요
+
+배포 서버를 공격하려는 다양한 시도들 때문에 보안 취약점이 밝혀지고
+개인 정보가 유출되면 큰 손실이 발생하기 때문에 보안에 관련된 기능를 개발할 때는 주의를 기울여야합니다.
+이런 다양한 공격을 대비한 기능을 한 팀이 전부 만드는 것은 현실적으로 어렵습니다.
+그렇기 때문에 보안을 위해 노력하는 개발자들이 개발한 Spring Security를 사용하는 겁니다.
+
+Spring Security는 모든 보안 시나리오에 대해 고려해서 작성된 프레임워크입니다.
+따라서 CSRF, CORS 같이 흔히 사용되는 보안 취약점들에 대해 업데이트합니다.
+또한 Spring Security는 사용자에게 역할을 부여하고 역할 기반으로 자원을 접근할 수 있게하는 `역할 기반 메커니즘`을 구현합니다.
+
+Security는 ID/Password, OAuth2, OpenIDs, Jwt Tokens 같은 다양한 인증 인가 방식을 지원합니다.
+
+## Spring Security 내부 동작
+
+<img src="/static/images/security/security-internal-flow.png" alt="spring security 내부 동작" />
+
+위 그림은 유저가 웹 서버에 HTTP 요청했을 때 security filter를 통해 인증을 하는 과정을 나타냅니다.
+
+1. 유저가 웹 서버에 HTTP 요청을 보냈을 때, filter가 요청을 가로챕니다.
+2. `Spring Security Filter`가 유저의 요청에서 자격증명 부분을 추출해서 `Authentication` 객체를 생성합니다.
+3. `Authentication Manager`는 `Authentication`의 유효성을 검사하기 위해 여러 `Authentication Provider`에게 인증을 요청합니다.
+4. `Authentication Providers`는 `Authentication`의 유효성을 검사하는 여러 비즈니스 로직을 담고있습니다.
+5. `UserDetails Manager/Service`는 DB, 캐시 서버 등에 저장된 유저 자격증명을 확인하고 유효성을 검사합니다.
+6. `Password Encoder`는 비밀번호를 암호화 하거나 해싱하는 로직을 제공합니다.
+7. `Authentication Manager`는 유효성 검사를 성공할 때까지 여러 `Authentication Provider`에게 검사를 위임합니다.
+8. `Filter`에게 인증 결과를 전달합니다.
+9. `Authentication` 객체를 `SecurityContext` 안에 저장합니다. `SecurityContext`는 클라이언트 요청 당 하나가 저장되며 `SecurityContextHolder`가 관리합니다.
+10. 클라이언트에게 인증 결과를 바탕으로 성공하면 보호된 자원으로 부터의 응답을 반환하거나 실패하면 인증 실패를 전달합니다.
+    0
