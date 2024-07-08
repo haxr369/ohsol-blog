@@ -1,5 +1,5 @@
 ---
-title: '[작성 중] KeyCloak 사용법과 OAuth2.0 And RestAPI'
+title: 'KeyCloak 사용법과 Google OAuth2.1'
 date: 2024-07-08
 tags: ['docker', 'KeyCloak', 'OAuth2.1', 'PKCE']
 draft: false
@@ -12,4 +12,13 @@ summary: 'KeyCloak 배포 방법, OAuth2.1 적용, 그리고 restAPI usage2'
 
 ## 개요
 
-지난 [포스팅](/)은 
+지난 포스팅은 KeyCloak의 유저를 수동으로 만들었습니다. 이번에는 OAuth를 통해 Identity Provider에 외부 소셜을 등록하려고 합니다.
+프로젝트에 사용되는 Google을 사용할 예정입니다.
+
+## Google에 Client 등록하기
+
+1. [google 클라우드 사용자 인증 정보 페이지](https://console.cloud.google.com/apis/credentials?project=aws-test-402302&hl=ko)에서 사용자 인증 정보 버튼 클리.
+2. OAuth Clinet id 만들기 클릭
+3. Identity Provider에 Google client 등록하기
+  <img src="/static/images/security/keycloak-inroll-google-client.png" alt="inroll google client" />
+4. KeyCloak 상단에 redirect url을 google redirect url로 등록
