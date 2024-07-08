@@ -1,9 +1,9 @@
 ---
-title: 'KeyCloak 사용법'
+title: 'KeyCloak 실행 및 수동 설정'
 date: 2024-07-08
 tags: ['docker', 'KeyCloak', 'OAuth2.1', 'PKCE']
 draft: false
-summary: 'KeyCloak 배포 방법, OAuth2.1 적용, 그리고 restAPI usage1'
+summary: 'KeyCloak 배포 방법, OAuth2.1 적용 1'
 ---
 
 ## 목차
@@ -11,6 +11,10 @@ summary: 'KeyCloak 배포 방법, OAuth2.1 적용, 그리고 restAPI usage1'
 <TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
 
 ## 개요
+
+[예제 코드 eazybyte section 13](https://github.com/eazybytes/springsecurity6/tree/3.2.0/section_13)
+[keycloak OAuth 방법](/blog/security/how-to-keycloak-oauth)
+[keycloak docs](https://www.keycloak.org/)
 
 MSA는 여러 **독립적인** 서비스가 한 시스템을 구성합니다. 시스템 속 정보와 서버 자원을 보호하기 위해선 **인증**되고, **인가**된 유저만 서버에 요청할 수 있어야합니다.
 여러 독립적인 서비스 각각이 인증과 인가를 담당하게 된다면, **인증이라는 중복된 역할**이 발생합니다.
