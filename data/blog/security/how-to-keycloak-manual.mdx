@@ -1,9 +1,9 @@
 ---
-title: 'KeyCloak 사용법과 OAuth2.0'
+title: 'KeyCloak 사용법과 OAuth2.0 And RestAPI'
 date: 2024-07-08
 tags: ['docker', 'KeyCloak', 'OAuth2.1', 'PKCE']
 draft: false
-summary: 'KeyCloak 배포 방법, OAuth2.1 적용, 그리고 restAPI usage'
+summary: 'KeyCloak 배포 방법, OAuth2.1 적용, 그리고 restAPI usage1'
 ---
 
 ## 목차
@@ -70,7 +70,7 @@ sequenceDiagram
     ResourceServer->>PublicClient: Validate token and return resources
 ```
 
-## KeyCloak 구축 방법
+## KeyCloak 수동 구축 방법
 
 KeyCloak은 PKCE도 구현할 수 있는 인증서버입니다. 이를 쉽게 구축하기 위해 저는 Docker를 이용했습니다.
 
