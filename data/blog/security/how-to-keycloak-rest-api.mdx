@@ -22,3 +22,37 @@ summary: 'KeyCloak 배포 방법, OAuth2.1 적용, 그리고 restAPI usage2'
 3. Identity Provider에 Google client 등록하기
   <img src="/static/images/security/keycloak-inroll-google-client.png" alt="inroll google client" />
 4. KeyCloak 상단에 redirect url을 google redirect url로 등록
+5. 브라우저에서 아래 경로로 로그인 요청을
+    ```
+      http://localhost:7180/realms/{realms 이름}/protocol/openid-connect/auth?client_id={public client id}&redirect_uri={client id의 리다이렉트 id}&state=479c7656-d62f-4955-9001-b0bdb06c40b5&response_mode=fragment&response_type=code&scope=openid&nonce=097dad2e-6a09-4697-b29e-b165939b84a8&code_challenge={code_challenge 값}&code_challenge_method=S256
+    ```
+  <img src="/static/images/security/keycloak-login-page.png" alt="login page" />
+  위 이미지처럼 구글 로그인 버튼이 생기지만, 인증을 하고 나면 빈 페이지가 나온다. 그 이유는 KeyCloak에 CORS 설정을 하지 않았기 때문이다.
+6. KeyCloak CORS, redirect_uri 설정
+ JS 앱은 아래처럼 PKCE를 위한 KeyCloak 설정을 했다.
+ ```js
+    function initializeKeycloak(keycloak: KeycloakService) {
+      return () =>
+        keycloak.init({
+          config: {
+            url: 'http://localhost:7180/',
+            realm: 'solAuthServerDev',
+            clientId: 'solBankClient',
+          },
+          initOptions: {
+            pkceMethod: 'S256',
+            redirectUri: 'http://localhost:4200/dashboard',
+          },
+          loadUserProfileAtStartUp: false,
+        });
+    }
+
+ ```
+ 또한 KeyCloak은 Public client를 위해 아래처럼 설정했다.
+ <img src="/static/images/security/keycloak-public-client-setting.png" alt="login page" />
+
+7. KeyCloak의 JWT 확인하기
+  이전의 postman으로 인증을 하고 jwt를 받았던 것처럼 public client도 인증하고 jwt를 받을 수 있다.
+  <img src="/static/images/security/keycloak-public-client-jwt-oauth.png" alt="keycloak jwt" />
+  위 이미지처럼 Public client가 KeyCloak에게 token을 요청하면 `access-token` 부분에 jwt를 얻을 수 있고,
+  이 jwt는 다른 Resource 서버에게 api 요청할 때 사용할 수 있다.
