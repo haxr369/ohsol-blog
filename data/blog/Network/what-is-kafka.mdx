@@ -1,0 +1,102 @@
+---
+title: Using Kafka on ECS (1)
+date: '2024-07-23'
+tags: ['kafka']
+draft: false
+summary: 'Using Kafka on ECS (1) What is Kafka?'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+
+## Kafka란?
+
+모든 KafkaInfra와 관련된 코드는 [KafkaInfra](https://github.com/GoungGoung-AI-Math/KafkaInfra) 작성되어 있습니다.
+
+**Kafka**는 **메세지 큐**와 **pub-sub** 아키텍처를 통합한 distributed data storage system입니다.
+
+메세지 큐 벙삭은 한 토픽에 대해 여러 Consumer가 데이터를 처리할 수 있어서 확장에 용이합니다.
+다만, 같은 메세지를 여러 subscriber가 처리할 순 없습니다.
+그리고 pub-sub 방식은 여러 subscriber가 같은 데이터를 처리할 수 있지만, 다른 데이터를 처리할 순 없는 한계가 있습니다.
+
+또한 Kafka는 사용자 활동을 모니터링하거나 읽은 메시지를 제거하지 않기 때문에 다른 메세징 시스템(RabbitMQ)에 비해 Overhead가 상당히 낮습니다.
+영원히 메세지를 Kafka가 저장하고 있을 수 없기 때문에 Kafka는 메세지를 **보존 기간**만큼 저장하고 있습니다. 보존 기간이 지나면 자동으로 삭제됩니다.
+따라서 Kafka가 어디까지 메세지를 읽었는지 관리하지 않기 때문에 Consumer가 자신이 어디까지 읽었는지 알고 있어야합니다.
+
+**Kafka**는 한 메세지를 재생할 수 있어서 여러 소비자가 동일한 주제를 구독할 수 있습니다. 
+왜냐하면 읽었던 메세지를 제거하지 않고 보존 기간 동안 저장하고 있기 때문입니다. 
+이런 특징 때문에 Kafka는 **메세지 큐** 방식과 **pub-sub** 방식을 통합했다고 할 수 있습니다.
+
+## Kafka의 요구사항
+
+Kafka는 아래 요구사항을 만족시킵니다.
+
+1. Producer가 메세지를 **저장**하면 Kafka는 **partition** 안에 시간순으로 저장
+2. Consumer는 하나의 topic을 **구독**해서 최근 생성된 메세지를 받아옴
+3. Consumer가 최근에 어디까지 읽었는지 **체크**해서 **offset**에 저장
+4. 한 Kafka 서버(**broker**, **node**)가 여러 큐(**topic**)을 **관리**
+5. Kafka는 이미 실행 중인 topic에 Producer나 Consumer를 **추가** 가능
+
+## Kafka 클러스터 아키텍처
+
+1. Kafka Brokers
+
+한 Kafka 서버는 한 broker 입니다. 하나의 서버만 사용하면 확장하기 어렵기 때문에 여러 broker를 둬서 Overhead를 줄입니다.
+여러 broker 간 조율은 `Apache ZooKeeper`가 관리합니다. 각 브로커는 초당 수만 개의 일기 및 쓰기 볼륨을 처리할 수 있습니다.
+또한 고유의 Id를 가지고 여러 `topic`을 분할해서 관리합니다. 
+
+2. topic & partition
+
+Kafka가 데이터를 저장하는 **추상적인 큐**를 **topic**이라고 합니다.
+구체적으론 여러 broker에 존재하는 **partition**이라는 곳에 각각 메세지가 저장됩니다.
+만약 partition이 3개이고 메세지가 30개라면 각 partition에 10개의 메세지가 시간순으로 저장됩니다.
+
+여러 partition을 두는 이유는 가용성과 동시성 때문입니다. topic을 한 broker에서만 관리하면 만약 서버가 다운되면 그 안에 메세지는 전부 유실되기 때문입니다.
+또한 여러 partition의 메세지를 여러 consumer가 동시에 처리할 수 있어서 확정성에도 좋습니다.
+
+그렇다면 한 partition은 여러 복제본에 어떤 읽기 및 쓰기 전략을 가질까요?
+**leader-follower model**을 사용하는데 DBMS의 Master-Salve model처럼 한 서버에 쓰기를 하면 나머지가 복제해서 읽기 Overhead를 분담하는 것과 비슷합니다.
+Producer가 leader partition에게 메세지를 전달하면 나머지 follower partition가 leader Partition에서 메세지를 복제해서 자신의 partition에 저장합니다.
+만약 leader partition을 가진 broker가 죽으면 어떻게 될까요? ZooKeeper가 있으니 괜찮습니다.
+
+3. Kafka ZooKeeper
+
+ZooKeeper는 **leader election**을 통해 특정 topic의 새로운 leader partition을 선택합니다.
+leader partition을 가진 broker가 죽거나 새로운 broker가 생기는 등 cluster가 변하면 전체 node(broker)에게 알리는 등 Kafka cluster를 관리합니다.
+
+또한, ZooKeeper는 한 broker에 과도한 Overhead가 들어가는 것을 막기 위해 로드밸런싱을 합니다.
+보통 라운드-로빈 방식으로 시간순으로 topic 내 partition에 로드밸런싱을 진행합니다.
+
+4. Kafka Producer
+
+Producer는 다른 메세징 시스템과 비슷합니다. 특정 메세지를 전송하기 위해 어떤 **topic**으로 전달할지 정합니다.
+
+5. Kafka Consumer
+
+Kafka broker는 stateless기 때문에 Consumer는 얼마나 많은 메세지를 소비했는지 추척해야합니다.
+구체적으로 **offset**이라고 하는 값으로 저장하며, offset 이전 메세지는 전부 소비했음을 확신합니다.
+이 offset 값은 ZooKeeper가 관리합니다.
+
+Consumer는 비동기적으로 broker에게 pull 요청을 보냅니다. 그럼 broker는 준비된 byte buffer를 제공합니다.
+
+## Kafka 커스텀 가능한 개념 정리
+
+위에서 나온 개념들 중 커스텀 가능한 개념을 정리하겠습니다.
+
+1. **num-of-partitions** : 몇개의 **partition**을 만들지 결정
+2. **replication-factor** : 각 partition은 몇개의 복제본을 만들지 결정합니다. 이때 replication factor는 cluster의 broker 수를 넘지 못합니다. 왜냐하면 한 broker에 특정 partition의 한 replication을 가질 수 있기 때문입니다.
+3. **topic 이름** : 토픽 이름
+4. **KAFKA_ADVERTISED_LISTENERS** : 컨테이너 내,외부에서 broker로 접근할 수 있는 url
+5. **KAFKA_ZOOKEEPER_CONNECT** : broker가 ZooKeeper를 접근할 수 있는 url 지정
+6. **AUTO_OFFSET_RESET_CONFIG** : consumer가 offset이 없을 때 ZooKeeper가 관리하는 offset 중 어떤 offset을 전달할지 결정
+7. **groupId** : 여러 consumer가 있을 때, 같은 topic을 소비하는 consumer들을 group으로 묶어서 id를 부여 (ex `attempt-analysis-topic-consumer`)
+8. **BATCH_SIZE_CONFIG** : Producer가 한 partition으로 **한번**에 보내는 recode의 개수 (ex 1638400)
+9. **MAX_POLL_RECORDS_CONFIG** : Consumer가 한번에 pull하는 recode의 개수 (ex 500)
+10. **MAX_PARTITION_FETCH_BYTES_CONFIG** : Consumer가 한번에 pull하는 recode의 총 byte 수 (ex 1048576)
+
+## 참고
+
+[What Is Apache Kafka?](https://spiceworks.com/tech/data-management/articles/what-is-kafka/)
+[Kafka Partition Leader Election](https://www.linkedin.com/pulse/kafka-partition-leader-election-hanh-ng%C3%B4-te6ic/)
