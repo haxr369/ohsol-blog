@@ -1,0 +1,174 @@
+---
+title: 프로젝트를 위해 어떻게 GPT API를 사용할까
+date: 2024-07-09
+lastmod: 2024-07-09
+tags: ['java', 'gpt-4o']
+draft: false
+summary: '공모전 프로젝트를 위해 gpt api 사용법 정리'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 개요
+
+이번 프로젝트는 기출문제에 대한 유저의 풀이(이미지 or 수식)을 GPT가 분석하고 이를 공식 해설과 비교해서 유저가 어떤 부분이 부족했는지 
+아니면 잘 설명했는지 알려주려고 합니다.
+
+상세한 코드는 [GptService](https://github.com/GoungGoung-AI-Math/GptService) 레포지토리에 있습니다.
+
+API를 이용해 gpt를 사용한다면 몇가지 요구사항이 생깁니다.
+
+1. API key를 어떻게 관리할 것인지
+2. 어떤 모델을 사용할 것인지
+3. gpt에게 어떤 역할을 부여할 것인지
+3. 유저가 작성한 글을 어떻게 gpt에게 전달할 것인지
+4. 유저가 입력한 이미지를 어떻게 gpt에게 전달할 것인지
+5. gpt가 전달한 글을 어떻게 역직렬화할 것인지
+6. gpt가 전달한 이미지를 어떻게 역직렬화할 것인지
+7. 공식 해설 & 문제 이미지를 어떻게 임베딩할 것인지
+8. 공식 해설 임베딩, 문제 임베딩 그리고 유저 질문을 어떻게 한번에 묶을 것인지
+
+## GPT API 분석하기
+
+### Create chat completion
+
+```
+POST
+ 
+https://api.openai.com/v1/chat/completions
+```
+
+글 생성 같은 경우 가장 중요한 것은 `json`으로 post 요청한다는 것과 `Authorization` 키를 전달한다는 겁니다.
+그리고 gpt에게 역할을 부여하는 것은 `message.content`에 작성하면 되는 것도 알았습니다.
+
+```sh
+curl https://api.openai.com/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -d '{
+    "model": "gpt-4o",
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are a helpful assistant."
+      },
+      {
+        "role": "user",
+        "content": "Hello!"
+      }
+    ]
+  }'
+
+```
+
+gpt의 응답 같은 경우 `json`으로 응답하는 것과 `choices.message.content`에 gpt의 글이 작성된 것을 볼 수 있습니다.
+실사용자에겐 필요 없지만, 서비스 관리자에겐 필요한 사용량도 `usage.total_tokens`도 보이네요.
+
+```json
+{
+  "id": "chatcmpl-123",
+  "object": "chat.completion",
+  "created": 1677652288,
+  "model": "gpt-3.5-turbo-0125",
+  "system_fingerprint": "fp_44709d6fcb",
+  "choices": [{
+    "index": 0,
+    "message": {
+      "role": "assistant",
+      "content": "\n\nHello there, how may I assist you today?",
+    },
+    "logprobs": null,
+    "finish_reason": "stop"
+  }],
+  "usage": {
+    "prompt_tokens": 9,
+    "completion_tokens": 12,
+    "total_tokens": 21
+  }
+}
+
+```
+
+조금 복잡하지만, stream 방식도 있다고 하는데 다음에 참고해보겠습니다.
+
+### Create embeddings
+
+```
+POST
+ 
+https://api.openai.com/v1/embeddings
+```
+
+유저의 `input` 텍스트를 전달합니다.
+
+```sh
+curl https://api.openai.com/v1/embeddings \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": "The food was delicious and the waiter...",
+    "model": "text-embedding-ada-002",
+    "encoding_format": "float"
+  }'
+
+```
+
+유저의 `input` 텍스트를 벡터화해서 `data.embedding`으로 값을 받습니다. 
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "embedding",
+      "embedding": [
+        0.0023064255,
+        -0.009327292,
+        .... (1536 floats total for ada-002)
+        -0.0028842222,
+      ],
+      "index": 0
+    }
+  ],
+  "model": "text-embedding-ada-002",
+  "usage": {
+    "prompt_tokens": 8,
+    "total_tokens": 8
+  }
+}
+
+```
+
+## RestTemplate으로 GPT로 요청 보내기
+
+아래처럼 GPT-4o에 맞는 쿼리인 `PromptMessage`를 작성하고, `RestTemplateClient`을 생성합니다.
+
+```
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class ChatCompleteTemplate {
+
+    private final ApiKey API_KEY;
+
+    public List<Content> sendPostRequest(PromptMessage jsonRequest){
+        try {
+            RestTemplateClient<CompleteChatResponse, PromptMessage> restTemplateClient = new RestTemplateClient<>();
+            CompleteChatResponse response = restTemplateClient.postWithBody(jsonRequest,
+                    AIServicePath.CHAT_COMPLETE_PAHT, API_KEY, CompleteChatResponse.class);
+            log.info("response : {}",response);
+            return response.getChoices();
+        }
+        catch (Exception e) {
+            log.error(e.getMessage(), e);
+            throw new RuntimeException(e.getMessage(), e);
+        }
+    }
+}
+```
+
+GPT로 부터 온 응답은 `CompleteChatResponse`으로 아래 같은 데이터를 포함하고 있습니다.
+
+<img alt="gpt 응답" src="/static/images/java/gpt-analysis-response.png" />
