@@ -1,0 +1,40 @@
+---
+title: How to Deploy Kafka on AWS (2)
+date: 2024-07-24
+lastmod: 2024-07-24
+tags: ['AWS', 'kafka', 'cicd']
+draft: false
+summary: 'AWS에 Kafka를 자동 배포하는 방법'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 개요
+
+[What is Kakfa](https://ohsol-blog.vercel.app/blog/Network/what-is-kafka)를 보면 
+kafka가 어떤 개념의 데이터 스토리지인지 그리고 어떤 구조와 설정들이 있는지 작성했습니다.
+
+이전 포스팅을 참고하면, Kafka는 몇가지 필수 구조이 있습니다.
+
+1. **Kafka broker**
+2. **Kafka ZooKeeper**
+3. **Schema registry** (이건 이번 포스팅에서 설명드리겠습니다.)
+
+Producer와 Consumer는 서비스 계층의 서버기 때문에 제외하겠습니다. 
+AWS에 배포할 것은 위 3가지 구조에 모니터링을 위한 **Kafka menager**를 추가할 수 있습니다.
+저는 로컬에서 이미 테스트를 완료한 환경을 그대로 사용하고 싶기 때문에 컨테이너 기반 배포를 선택했습니다.
+
+컨테이너 배포는 ECS와 EKS가 있는데 저는 k8s에 대한 지식이 부족하고 적은 컨테이너 개수를 가질 때 비용효율적인 ECS를 선택했습니다.
+또한 간단하게 서버를 구축하기 위해 fargate로 서비스 type을 선택하겠습니다.
+
+
+
+
+
+
+
+## 참고
+
+[Best Practices for Running Apache Kafka on AWS](https://aws.amazon.com/ko/blogs/big-data/best-practices-for-running-apache-kafka-on-aws/)

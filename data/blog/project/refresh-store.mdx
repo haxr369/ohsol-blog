@@ -1,0 +1,125 @@
+---
+title: refresh token 재활용 못하게 막는 방법
+date: 2023-11-03
+tags: ['spring', 'jwt', 'refresh-token', 'redis', 'memcache', 'db']
+draft: false
+summary: 'JWT의 refresh token을 재활용 못하게 막는 방법 고민'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 개요
+
+[websocket](https://github.com/kimjang-toolkit/webSocket) 프로젝트에서 로그인을 하면 `access token`과 `refresh token`을 전달하게 됩니다.
+refresh token의 역할은 만료된 access token을 대체할 새로운 access token을 얻기 위함입니다.
+
+만약 한번 사용했던 refresh token을 재사용해서 새로운 access token을 무한정 만들 수 있다면 어떻게 될까요?
+해커가 refresh token으로 유저의 access token을 마구마구 얻어와서 사용할 겁니다.
+
+### 요구사항 정의
+
+이 문제를 해결하기 위해선 refresh token을 긴 기간 동안 안전하게 저장할 수 있어야하고, 빠르게 비교해서 재사용을 감지할 수 있어야합니다.
+그렇다면 어떻게 저장하고 빠르게 감지할 수 있을까요?
+
+DB와 메모리 기반 캐시를 이용할 수 있습니다. 현재 프로젝트에서는 mysql DB를 사용하고 있습니다.
+refresh token을 메모리 캐시와 DB에 저장한다면, 서버가 재시작되더라도 DB에 저장된 refresh token을 사용할 수 있습니다.
+
+또한 access token의 만료 시간은 2분 정도이고, refresh token의 만료 시간은 약 120분 정도로 설정했습니다.
+이때, 정상적인 상황에서 refresh token이 업데이트 되는 주기는 2분입니다.
+해커에게 refresh token을 탈취 당하고 재사용하는 빈도수는 일반적인 사용 보다 적기 때문에 읽기 요구사항이 크게 늘진 않습니다.
+
+정리하면, 읽기와 쓰기 빈도수가 비슷할 때 효율적인 캐시 전략이 필요합니다.
+
+## Refresh token에 맞는 캐싱 전략 고민
+
+1. **Cache-Aside** 전략 [읽기 전략]
+
+- client 요청이 들어올 때 server가 먼저 cache에 데이터가 있는지 확인합니다.
+- **(cache hit)** 있다면 읽어서 client에게 데이터를 전달합니다.
+- **(cache miss)** 없다면 server는 db 쿼리로 필요한 데이터를 얻습니다.
+    - 얻은 데이터를 클라이언트에게 전달하고, 메모리 캐시에 저장합니다.
+
+**고려할 점**
+
+Cache Aside 전략은 빠르게 읽을 수 있다면 장점이 있지만, 
+자주 상태가 변하는 데이터는 자주 DB 쿼리 및 메모리 캐시 업데이트가 이뤄지기 때문에 비효율적일 수 있습니다.
+
+2. **Write-Through** 전략 [쓰기 전략]
+
+- client가 DB에 데이터를 Upsert할 때, 메모리 캐시도 같이 Upsert합니다.
+
+**고려할 점**
+
+모든 DB 데이터를 메모리 캐시에 저장할 수 없기 때문에 메모리 캐시의 TTL 설정이나 캐시를 지우는 전략이 따로 필요합니다.
+좋은 점은 항상 메모리 캐시에 최신의 데이터를 가질 수 있는겁니다.
+
+3. **Write-Behind** 전략 [쓰기 전략]
+
+- Write through를 조금 수정한 버전입니다.
+- clinet가 DB 데이터를 Upsert할 때 데이터를 모아두고 배치로 DB에 수정을 가합니다.
+
+**고려할 점**
+
+모든 DB 데이터를 메모리 캐시에 저장할 수 없기 때문에 메모리 캐시의 TTL 설정이나 캐시를 지우는 전략이 따로 필요합니다.
+또한 DB에 데이터를 전달하기 전에 메모리 캐시가 다운되면 데이터가 사라지기 때문에 가용성에 문제가 생길 수 있습니다.
+**보안 관련된 refresh token은 날라가면 절대 안되기 때문에 적절하지 않은 것 같습니다.**
+
+4. **Read-Through** 전략
+
+- client 요청이 들어올 때 server가 먼저 cache에 데이터가 있는지 확인합니다.
+- **(cache hit)** 있다면 읽어서 client에게 데이터를 전달합니다.
+- **(cache miss)** 없다면 db 쿼리로 필요한 데이터를 얻습니다.
+    - 얻은 데이터를 메모리 캐시에 저장하고 server로 전달합니다.
+    - server는 데이터를 client에게 전달합니다.
+
+**고려할 점**
+
+한번 저장하고 자주 읽을 때 유용하게 사용되는 전략입니다.
+데이터가 수정될 때 메모리 캐시에 적재하는 과정을 client가 기다려야하기 때문에 자주 수정된다면 적절하지 않습니다.
+
+## 요구사항에 맞는 전략 선택
+
+refresh token을 client가 보내서 그 값으로 db 데이터를 업데이트하진 않습니다. 서버가 만들어서 메모리 캐시나 DB에 저장합니다.
+읽기 시에는 **Cache-Aside** 전략과 쓰기 시에는 **Write-Through** 전략을 섞어서 구현하는게 효율적일 것 같습니다.
+
+### refresh 토큰을 통해 access token 재발급
+
+- client 요청이 들어올 때 server가 먼저 cache에 refresh token이 있는지 확인합니다.
+- **(cache hit)** 있다면 읽고 요청의 token과 비교합니다.
+- **(cache miss)** 없다면 DB에서 읽습니다.
+    - db에서 가져온 hashed refresh token과 client의 token의 hash match 여부를 확인합니다.
+        - 맞다면, 새로운 access token과 refresh token을 생성하고 client에게 전달합니다. 그리고 백그라운드에서 **메모리 캐시**와 **DB**에 저장합니다.
+        - 틀리다면, client에게 권한 없음을 전달합니다.
+
+### 메모리 캐시 퇴거 전략 (Eviction Policies)
+
+보통 메모리 캐시는 하드디스크에 있는 db 보다 크기가 작습니다. 그렇기 때문에 메모리 캐시 사이즈를 제한하기 위해 적절한 퇴거 전략이 필요합니다.
+refresh token 같은 경우 access token의 만료 시간인 **2분**을 주기로 읽어질 확률이 급격히 올라갑니다.
+그렇기 때문에 아래 같이 요구사항을 정리할 수 있습니다.
+
+1. refresh token이 **생성된 후 적어도 2분**까지는 메모리 캐시 상에 유지되어야 합니다.
+2. 한번 읽고 대체된 refresh token은 더 이상 읽을 필요가 없어집니다.
+3. refresh token이 생성되고 너무 오래되면 읽을 확률이 줄어듭니다.
+
+위와 같은 요구사항에 맞는 전략은 **TTL + MRU** 전략 입니다.
+
+다른 다양한 전략이 많지만, **TTL + MRU**를 선택한 이유는 **오래된 캐시를 제거(TTL)**하고 **가장 최근 읽은 캐시를 제거(MRU)** 하는 점입니다. 
+refresh token은 생성되고 나서 시간이 지나면 지날 수록 읽을 확률이 올라가고, 한번 읽으면 다시 읽을 확률이 매우 낮기 때문입니다.
+
+## 요구사항에 맞는 캐시 스토리지 선택하기
+
+### 요구사항
+
+
+
+### 캐시 스토리지 후보
+
+- Mysql memcached plugin
+
+
+## 참고
+
+[Modern Caching 101: What Is In-Memory Cache, When and How to Use It](https://www.gigaspaces.com/blog/in-memory-cache/)
+[Cache Strategies](https://medium.com/@mmoshikoo/cache-strategies-996e91c80303)
