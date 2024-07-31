@@ -126,7 +126,7 @@ refresh token은 생성되고 나서 시간이 지나면 지날 수록 읽을 �
 refresh token은 단순한 문자열 형태만 저장하면 되고 빠르게 DB에 저장할 수 있어야합니다. 
 그렇기 때문에 Redis는 오버 스팩이고 DB에 저장하는 과정이 memcache 보다 느리기 때문에 선택하지 않았습니다.
 
-또한 AWS ElasticCache로 배포하기 좋습니다. 
+또한 AWS ElasticCache로 배포하기 좋습니다. Mysql memcached plugin 같은 경우 현재 AWS RDS를 쓰고 있는 상황과 맞지 않고 배포가 어려울 것 같아서 선택하지 않았습니다.
 
 ## 참고
 
