@@ -1,0 +1,189 @@
+---
+title: refresh token 저장 구현 - Memcached
+date: 2024-07-31
+tags: ['spring', 'jwt', 'refresh-token', 'memcache', 'AWS']
+draft: false
+summary: 'Memcached를 이용해서 Refresh token을 저장하고 관리하기'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 개요
+
+[이전 포스팅](/blog/project/refresh-store)을 참고하면 **Memcache**를 이용해서 **TTL + MRU** 하이브리드 전략을 통해 refresh token을 캐싱하고 관리하려고 합니다.
+이렇게 되면 DB에서 쿼리하는 것 보다 더 빠르게 refresh token을 읽고 client에게 다음 작업을 할 수 있게 할겁니다.
+
+## How use Memcache in Spring boot
+
+`Spring`에서는 cache 프레임워크를 지원합니다. 
+Cache 프레임워크는 Spring 서버와 Cache 서버와 연결을 추상화하고 손 쉽게 메서드의 호출 결과를 캐싱하거나 제거할 수 있습니다.
+이를 위해 몇가지 어노테이션을 지원합니다.
+
+1. **Cacheable**
+
+아래 코드처럼 메서드의 실행 결과를 저장합니다.
+```java
+@Cacheable(value="book", condition="#name.length < 32", unless="#result.hardback")
+public Book findBook(String name)
+```
+
+cache에 key - value 형태로 저장되고 key는 메서드에 들어가는 인자이고, value는 return 값입니다.
+condition에 따라 true일 때만 캐시에 저장시킬 수 있고, unless 조건에 따라 저장 시키지 않을 수 있습니다.
+
+2. **CachePut**
+
+`Cacheable`은 `is null & insert`만 하는 어노테이션이라면 `CachePut`은 `Upsert`를 하는 어노테이션입니다.
+캐시가 없을 때는 똑같이 동작하지만, CachePut은 캐시가 있어도 메서드가 실행되며 결과 값이 기존 값을 업데이트합니다.
+
+3. **CacheEvict**
+
+```java
+@CacheEvict(value = "books", allEntries = true, beforeInvocation = true)
+public void loadBooks(InputStream batch)
+```
+
+이 메소드는 캐시에서 데이터를 제거하는 트리거로 작동합니다. 
+`CacheEvict`는 하나 이상의 캐시를 지정할 수 있으며, 키나 조건을 지정할 수 있습니다. 
+또한, 전체 캐시를 비우는 allEntries라는 추가 매개변수를 특징으로 합니다.
+
+또한, beforeInvocation 속성을 통해 메소드 실행 전후에 캐시 제거 시점을 지정할 수 있습니다. 
+기본값은 false로, 메소드가 성공적으로 완료된 후에 캐시 제거가 수행됩니다. beforeInvocation = true로 설정하면 메소드가 호출되기 전에 캐시 제거가 항상 발생합니다.
+
+## 캐시 전략 구현
+
+[이전 포스팅](/blog/project/refresh-store)에서 캐시를 읽고 쓰는 전략을 **Cache-Aside** 전략과 쓰기 시에는 **Write-Through**을 섞어서 적용하고
+캐시를 제거하는 전략을 **TTL + MRU**을 적용하기로 정했습니다.
+아래처럼 이를 구현할 수 있습니다.
+
+### Refresh token 저장을 위한 요구사항
+
+1. 로그인 시 `email`을 key로 `refresh token`을 value로 저장해야한다.
+2. `access token` 재발급 시 `refresh token` 검색
+    - DB나 Cache에 있다면 `access token`과 `refresh token`을 재발급하고 기존 refresh token을 대체하여 저장
+      - refresh token은 비밀번호처럼 hashing 해야합니다.
+      - 저장된 token과 검색 token을 hash match 해야합니다. 안 맞다면 401 `Unauthorized` 에러 발생
+    - DB나 Cache에 없다면 401 `Unauthorized` 에러 발생
+
+위 요구사항을 위해서 두가지 `CacheRepository` 메서드를 작성합니다.
+
+1. `saveToken` : 인자는 `email` and `refresh token`
+2. `searchTokenAndCache` : 인자는 `email` and `refresh token`
+
+### 발생하는 문제
+
+주요하게 발생하는 문제는 역시 직렬화 문제입니다.
+아래 메서드처럼 `RefreshToken`이라는 클래스만 저장될거라고 생각하고 실행시켰지만, 직렬화 문제가 발생했습니다.
+
+```RefreshTokenCacheService.java
+  @CachePut(value= "refresh", key="#email")
+    public RefreshToken saveToken(String email, String hashedRefreshToken){
+        Optional<RefreshToken> token = refreshTokenRepository.findByEmail(email);
+        if(token.isPresent()){ // 예전에 로그인해서 refresh token이 남아 있는 경우 업데이트
+            token.get().setRefreshToken(hashedRefreshToken);
+            return refreshTokenRepository.save(token.get());
+        } else{ // 처음 refresh token 만들어서 저장하는 경우
+            RefreshToken newToken = RefreshToken.builder()
+                    .email(email)
+                    .refreshToken(hashedRefreshToken)
+                    .build();
+            return refreshTokenRepository.save(newToken);
+        }
+    }
+```
+
+```
+2024-08-01T15:54:33.739+09:00  INFO 18727 --- [solsol-dev] [           main] com.google.code.ssm.spring.SSMCache      : 
+Put 'kimjang.toolkit.solsol.domain.cache.RefreshToken@10af6715' under key solsol@gmail.com to cache refresh
+2024-08-01T15:54:33.746+09:00  WARN 18727 --- [solsol-dev] [           main] com.google.code.ssm.spring.SSMCache      : 
+An error has ocurred for cache refresh and key solsol@gmail.com
+
+java.lang.IllegalArgumentException: Non-serializable object
+	at net.rubyeye.xmemcached.transcoders.BaseSerializingTranscoder.serialize
+```
+
+그래서 String으로 value의 타입을 바꿔줬습니다. 그러자 직렬화 문제가 나오지 않았습니다.
+하지만, 나중에 어떤 상황에서는 다양한 타입의 클래스를 저장해야할 수 있습니다.
+그래서 문제를 만들어서 해결했습니다. 답은 간단했습니다. 사용하고자하는 `RefreshToken`이 `Serializable`을 구현하면 됐습니다.
+
+### 과연 캐시를 사용하는게 효용성이 있을까?
+
+DB에서 쿼리하는 것 보다 캐시에서 가져오는게 더 빠르다는 이야기를 듣기만 했지 직접 눈으로 보지는 못했습니다.
+그래서 아래처럼 테스트를 수행했습니다.
+각각 1000회 token을 가져오는 동작을 수행했습니다.
+
+```java
+    @Test
+    public void countTimeDBAndCache(){
+        // set up
+        String email = "solsol@gmail.com";
+        String refreshToken = "1234";
+        String hashedRefreshToken = passwordEncoder.encode(refreshToken);
+        RefreshToken tokenEntity = RefreshToken.builder()
+                .email(email)
+                .refreshToken(hashedRefreshToken)
+                .build();
+        refreshTokenRepository.save(tokenEntity);
+        // email에 맞는 refresh token 캐시에 저장
+        refreshTokenCacheService.saveToken(email, hashedRefreshToken);
+
+        LocalDateTime start = LocalDateTime.now();
+        for(int i=0; i<testCount; i++){
+            String savedToken = refreshTokenRepository.findByEmail(email)
+                    .get().getRefreshToken();
+            if(!passwordEncoder.matches(refreshToken, savedToken)){
+                log.error("don't match refresh token");
+                throw new RuntimeException("don't match refresh token");
+            }
+        }
+        LocalDateTime end = LocalDateTime.now();
+        Duration duration = Duration.between(end, start);
+        log.info("DB 쿼리 {}회 걸린 시간 : {}",testCount, duration.toMillis());
+
+
+        start = LocalDateTime.now();
+        for(int i=0; i<testCount; i++){
+            String savedRefreshToken = refreshTokenCacheService.searchToken(email);
+            if(!passwordEncoder.matches(refreshToken, savedRefreshToken)){
+                log.error("don't match refresh token");
+                throw new RuntimeException("don't match refresh token");
+            }
+        }
+        end = LocalDateTime.now();
+        duration = Duration.between(end, start);
+        log.info("캐싱 쿼리 {}회 걸린 시간 : {}",testCount, duration.toMillis());
+
+    }
+```
+
+### 1개 token을 찾는 경우 
+
+아래 로그 같이 캐싱을 적용하면 DB에서 가져오는 것보다 시간이 **25%** 감소하게 됩니다.
+다만 **10,000개** token 중 한개를 찾는 경우에는 시간이 얼마나 걸릴지 알고 싶습니다.
+
+```sh
+2024-08-01T16:36:59.366+09:00  INFO 41338 --- [solsol-dev] [           main] k.t.s.jwt.RefreshTokenCacheServiceTest   : 
+DB 쿼리 10000회 걸린 시간 : 4,350ms
+2024-08-01T16:37:02.409+09:00  INFO 41338 --- [solsol-dev] [           main] k.t.s.jwt.RefreshTokenCacheServiceTest   : 
+캐싱 쿼리 10000회 걸린 시간 : 3,041ms
+```
+
+### 10,000개 token 중 한개를 찾는 경우
+
+1개 token을 단순히 가져오는 것에 비해 캐시는 큰 차이가 없었지만, DB는 table의 크기가 커질 수록 검색 시간도 같이 증가했습니다.
+따라서 table의 크기가 커지는 상황에서 캐시의 효율성이 더 올라가게됩니다!
+
+````sh
+2024-08-01T16:58:05.120+09:00  INFO 46707 --- [solsol-dev] [           main] k.t.s.jwt.RefreshTokenCacheServiceTest   : 
+DB 쿼리 10000회 걸린 시간 : 26,263ms
+2024-08-01T16:58:08.071+09:00  INFO 46707 --- [solsol-dev] [           main] k.t.s.jwt.RefreshTokenCacheServiceTest   : 
+캐싱 쿼리 10000회 걸린 시간 : 2,949ms
+```
+
+
+## 참고
+
+[Non-serializable object error while working on Memcache](https://stackoverflow.com/questions/3210702/non-serializable-object-error-while-working-on-memcache)
+
+
