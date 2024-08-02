@@ -1,0 +1,75 @@
+---
+title: 'Hashing 알고리즘 사용기'
+date: 2024-08-02
+lastmod: 2024-08-02
+tags: ['CS', 'hash', 'sha-256', 'BCrypt', 'jwt']
+draft: false
+summary: 'refresh token을 저장하는 해싱 알고리즘에 대한 문제와 실험'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 개요
+
+[Websocket](https://github.com/kimjang-toolkit/webSocket) 프로젝트 중 refresh token을 안전하게 저장하기 위해 `BCrypt` hashing 알고리즘을 이용했습니다.
+하지만 서로 다른 두 refresh token을 hash match 할 때 계속 같다고 하는 이상한 현상이 발생했습니다.
+
+## 문제 상황
+
+아래 같이 테스트를 작성하고 실행시켰을 때 테스트가 통과되지 않습니다. 
+분명 `test1`과 `test2`는 다른 값을 인코딩한 refresh token이고 결과로 나온 문자열도 완전히 다릅니다.
+
+```java
+@Slf4j
+@SpringBootTest
+@Transactional
+public class ReIssueTokenTest {
+
+    private final SecretKey key = Keys.hmacShaKeyFor(SecurityConstants.JWT_KEY.getBytes(StandardCharsets.UTF_8));
+
+    @Autowired
+    private TokenHasher tokenHasher;
+
+    @Autowired
+    private JwtIssuer jwtIssuer;
+
+    @Autowired
+    private PasswordEncoder bCryptPasswordEncoder;
+
+    private final AuthorityInfo authorityInfo1 = AuthorityInfo.builder()
+            .email("solsol@gmail.com").authorities("ROLE_USER").build();
+
+    private final AuthorityInfo authorityInfo2 = AuthorityInfo.builder()
+            .email("email").authorities("ROLE_USER").build();
+
+    @Test
+    public void when_string_then_not_match_bCrypt(){
+        // 토큰 생성
+        String test1 = jwtIssuer.getRefreshToken(authorityInfo1);
+        log.info("test1 : {}",test1);
+        String test2 = jwtIssuer.getRefreshToken(authorityInfo2);;
+        log.info("test2 : {}",test2);
+
+        String hashed = bCryptPasswordEncoder.encode(test1);
+        // 새로운 refresh token 가져오고, 해싱된 토큰 비교. 다른 값을 해싱했기 때문에 match하지 말아야한다.
+        Assertions.assertFalse(bCryptPasswordEncoder.matches(test2, hashed));
+    }
+}
+```
+
+아래는 발생한 로그입니다. 분명 `test1`과 `test2`는 다른 문자열입니다. 그러나 테스트가 통과되지 않았다는 것은 `BCrypt` 알고리즘 상 같은 **해싱**이라는 것을 의미합니다.
+
+```sh
+2024-08-02T18:22:00.580+09:00  INFO 48795 --- [solsol-dev] [           main] k.toolkit.solsol.jwt.ReIssueTokenTest    : 
+test1 : eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJTb2wtS2ltamFuZyIsInN1YiI6IkpXVCBUb2tlbiIsImVtYWlsIjoic29sc29sQGdtYWlsLmNvbSIsImF1dGhvcml0aWVzIjoiUk9MRV9VU0VSIiwiY3JlYXRlX2RhdGUiOiIyMDI0LTA4LTAyVDE4OjIyOjAwLjU1Mzg2MyIsImlhdCI6MTcyMjU5MDUyMCwiZXhwIjoxNzIyNTkwNjQwfQ.ftiMsSZeUHZUtNciN2_bsNrCP6_X_4RGeRwQIwXooiY
+2024-08-02T18:22:00.581+09:00  INFO 48795 --- [solsol-dev] [           main] k.toolkit.solsol.jwt.ReIssueTokenTest    : 
+test2 : eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJTb2wtS2ltamFuZyIsInN1YiI6IkpXVCBUb2tlbiIsImVtYWlsIjoiZW1haWwiLCJhdXRob3JpdGllcyI6IlJPTEVfVVNFUiIsImNyZWF0ZV9kYXRlIjoiMjAyNC0wOC0wMlQxODoyMjowMC41ODExODYiLCJpYXQiOjE3MjI1OTA1MjAsImV4cCI6MTcyMjU5MDY0MH0.4bIblnTPlpKJti_13GXoN0lM6ltlYk23uUJcapyrzlw
+```
+
+이번 포스팅은 왜 저 두 token이 같게 됐는지 이유를 알아보려고 합니다.
+참고로 `test1`과 `test2`는 `SHA-256`으로 해싱하면 matching되지 않습니다.
+
+## BCrypt 알고리즘의 원리
+
