@@ -62,8 +62,10 @@ public void loadBooks(InputStream batch)
 1. 로그인 시 `email`을 key로 `refresh token`을 value로 저장해야한다.
 2. `access token` 재발급 시 `refresh token` 검색
     - DB나 Cache에 있다면 `access token`과 `refresh token`을 재발급하고 기존 refresh token을 대체하여 저장
-      - refresh token은 비밀번호처럼 hashing 해야합니다.
+      - refresh token은 비밀번호처럼 sha-256 hashing 해야합니다.
       - 저장된 token과 검색 token을 hash match 해야합니다. 안 맞다면 401 `Unauthorized` 에러 발생
+      - 기존 cache **제거**
+      - 새로운 cache 저장 
     - DB나 Cache에 없다면 401 `Unauthorized` 에러 발생
 
 위 요구사항을 위해서 두가지 `CacheRepository` 메서드를 작성합니다.
