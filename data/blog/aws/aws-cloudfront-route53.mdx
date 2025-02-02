@@ -1,0 +1,46 @@
+---
+title: AWS CloudFront와 Route53으로 웹 사이트 도메인 입히기
+date: 2025-02-02
+lastmod: 2025-02-02
+tags: ['AWS', 'CloudFront', 'Route53']
+draft: false
+summary: 'AWS CloudFront와 Route53으로 웹 사이트 도메인 입히기'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+AWS의 CloudFront와 Route53으로 웹 사이트 도메인 입히기
+
+## Route53에서 도메인 연결하기
+
+### 순서
+
+1. AWS나 다른 도메인 공급자(ex 가비아)에서 도메인을 구매해야한다.
+2. Route53에서 도메인 명과 같은 호스팅 영역 생성
+3. ACM에서 도메인 인증서 생성 -> Cloudfront를 위해 사용하려면 `us-east-1` 리전에 생성해야한다.
+4. CloudFront 배포 생성
+
+## CloudFront 배포 생성 후 Route53 연결하기
+
+`주의!` 이 과정은 Cloudfront 배포 생성 후 진행해야한다.
+
+### 순서
+
+1. Cloudfront 배포 생성 후 설정 편집
+2. `Custom SSL certificate`을 선택하면 `us-east-1` 리전에 생성한 ACM 인증서를 선택한다.
+3. `Alternative domain name (CNAMEs) - optional`에 도메인 명을 입력한다. -> 이 때 도메인 명은 ACM 인증서와 동일한 도메인 명이어야한다.
+4.  Alternative domain name이 Custom SSL 설정 보다 상단에 있지만, 나중에 하는 이유는 도메인 명을 명확하게 표시하기 위해서이다.
+5. 설정 변경사항을 저장하고 Route53 호스팅 영역 페이지로 이동
+6. 레코드 생성 페이지에서 레토드 이름을 `Alternative domain name이 Custom SSL` 설정에서 입력한 도메인 명으로 입력한다.
+7. 별칭을 이용해서 `트래픽 라우팅 대상`을 Cloudfront 배포로 설정한다.
+8. 하단에 배포했던 Cloudfront 배포 이름을 입력한다.
+9. 레코드 생성 버튼을 눌러 레코드를 생성한다.
+10. 레코드 생성 후 몇 분 후에 도메인 명으로 접속해보면 웹 사이트가 정상적으로 보일 것이다.
+
+## Route53 결과 화면
+
+<img alt="Route53 결과 화면" src="/static/images/aws/aws-cloudfront-route53.png" />
+
+위 그림에서 `gonggong99.store` 도메인이 A record로 Cloudfront 배포로 정상적으로 연결된 것을 확인할 수 있다.
