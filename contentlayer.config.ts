@@ -110,6 +110,39 @@ export const Blog = defineDocumentType(() => ({
   },
 }))
 
+export const Whitepaper = defineDocumentType(() => ({
+  name: 'Whitepaper',
+  filePathPattern: 'whitepapers/**/*.mdx',
+  contentType: 'mdx',
+  fields: {
+    title: { type: 'string', required: true },
+    date: { type: 'date', required: true },
+    lastmod: { type: 'date' },
+    period: { type: 'string' },
+    department: { type: 'string' },
+    role: { type: 'string' },
+    techStack: { type: 'list', of: { type: 'string' }, default: [] },
+    summary: { type: 'string' },
+    draft: { type: 'boolean' },
+    heroImage: { type: 'json' },
+  },
+  computedFields: {
+    ...computedFields,
+    structuredData: {
+      type: 'json',
+      resolve: (doc) => ({
+        '@context': 'https://schema.org',
+        '@type': 'Article',
+        headline: doc.title,
+        datePublished: doc.date,
+        dateModified: doc.lastmod || doc.date,
+        description: doc.summary,
+        url: `${siteMetadata.siteUrl}/${doc._raw.flattenedPath}`,
+      }),
+    },
+  },
+}))
+
 export const Authors = defineDocumentType(() => ({
   name: 'Authors',
   filePathPattern: 'authors/**/*.mdx',
@@ -124,13 +157,14 @@ export const Authors = defineDocumentType(() => ({
     linkedin: { type: 'string' },
     github: { type: 'string' },
     layout: { type: 'string' },
+    resume: { type: 'string' },
   },
   computedFields,
 }))
 
 export default makeSource({
   contentDirPath: 'data',
-  documentTypes: [Blog, Authors],
+  documentTypes: [Blog, Whitepaper, Authors],
   mdx: {
     cwd: process.cwd(),
     remarkPlugins: [
