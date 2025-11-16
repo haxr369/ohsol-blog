@@ -1,0 +1,78 @@
+---
+title: LeetCode Week 2
+date: 2025-11-16
+lastmod: 2025-11-16
+tags: ['LeetCode', 'Algorithm', 'Week 2', 'Binary Search']
+draft: true
+summary: 'LeetCode Week 2 문제 풀이 및 코드리뷰 정리'
+---
+
+## 목차
+
+<TOCInline toc={props.toc} exclude="목차" toHeading={(2, 3)} />
+
+## 문제 풀이 중 새로운 기술 습득
+
+
+### 이진트리 탐색 방법
+
+이진트리라고 하면 특정 노드(N)을 기준으로 왼쪽, 오른쪽에 자식 노드를 가지는 트리를 말한다.
+한 배열에 각 노드의 값을 저장한다. level이 커지면서 각 레벨에 속한 노드의 수가 2배씩 늘어난다.
+
+루트 노드의 인덱스: `1`
+왼쪽 자식 노드의 인덱스: `2*N`
+오른쪽 자식 노드의 인덱스: `2*N+1`
+부모 노드의 인덱스: `N/2`
+
+```mathmatics
+        A
+      /   \
+     B     C
+    / \   / 
+   D   E F  
+```
+
+이런 이진 트리는 Heap 자료구조에서 그대로 사용한다.
+
+### DFS로 이진트리 생성 방법
+
+만약 DFS로 데이터를 탐색하면서 이진트리를 생성하고 싶다면, 재귀를 이용하면 된다.
+기본 원리는 재귀를 이용하여 왼쪽, 오른쪽 자식 노드를 탐색하고, 현재 노드에 데이터를 저장하는 것이다.
+
+```Java
+/**
+ * DFS로 이진트리(Tree) 생성 방법
+ * @param index 현재 노드 인덱스
+ * @param data 데이터 배열
+ * @return void
+*/
+public void dfs(int index, int[] data) {
+    if (index > data.length) { // 데이터 범위를 벗어나면 종료
+        return;
+    }
+    dfs(index * 2, data); // 왼쪽 자식 노드 탐색
+    dfs(index * 2 + 1, data); // 오른쪽 자식 노드 탐색
+    // 현재 노드에 데이터 저장
+    tree[index] = data[index];
+}
+```
+
+
+트리에 노드 수를 계산하려면 아래와 같이 계산할 수 있다.
+데이터 개수 N개가 있을 때, 트리의 높이는 log2(N)이다.
+log를 사용하지 않고 계산하려면 2의 몇 제곱이 N보다 큰지 계산하면 된다.
+예를 들어 2^14 제곱이 N 보다 크고, 2^13 제곱이 N 보다 작다면, 트리의 높이는 14이다.
+트리의 노드 수는 2^height - 1 이다.
+
+
+```Java
+int nodeCount= 1;
+int height = 0;
+while (nodeCount <= N) {
+    nodeCount *= 2;
+    height++;
+}
+```
+
+
+## 코드리뷰 내용 정리
